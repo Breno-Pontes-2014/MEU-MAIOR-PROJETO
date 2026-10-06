@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadastro - SGH Hoteleiro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="auth-body">
+    <div class="auth-card">
+        <div class="auth-header">
+            <h2>Criar Nova Conta</h2>
+            <p>Preencha os dados abaixo</p>
+        </div>
+        <form id="formCadastro">
+            <div class="form-group">
+                <label for="regUsername">Usuário</label>
+                <input type="text" id="regUsername" placeholder="Escolha um nome de usuário" required>
+            </div>
+            <div class="form-group">
+                <label for="regPassword">Senha</label>
+                <input type="password" id="regPassword" placeholder="••••••••" required>
+            </div>
+            <div class="form-group">
+                <label for="regRole">Perfil de Acesso</label>
+                <select id="regRole">
+                    <option value="user">Usuário Comum</option>
+                    <option value="recepcao">Recepção</option>
+                    <option value="gerente">Gerente</option>
+                    <option value="admin">Administrador</option>
+                </select>
+            </div>
+            <button type="submit" class="btn-primary full-btn">Cadastrar Conta</button>
+            <div id="regAlert" class="auth-alert"></div>
+        </form>
+        <div class="auth-footer">
+            <p>Já possui conta? <a href="/login">Voltar ao Login</a></p>
+        </div>
+    </div>
+    <script src="/static/cadastro.js"></script>
+</body>
+</html>

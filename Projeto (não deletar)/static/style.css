@@ -1,0 +1,254 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    background-color: #f1f5f9;
+    color: #334155;
+}
+
+/* Layout Geral */
+.app-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 260px;
+    background-color: #0f172a;
+    color: #fff;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+}
+
+.brand h2 {
+    font-size: 20px;
+    margin-bottom: 24px;
+    color: #38bdf8;
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #1e293b;
+    border-radius: 8px;
+    margin-bottom: 24px;
+}
+
+.avatar {
+    width: 40px;
+    height: 40px;
+    background: #2563eb;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.info {
+    display: flex;
+    flex-direction: column;
+}
+
+.username {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.role-tag {
+    font-size: 10px;
+    color: #94a3b8;
+}
+
+.nav-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-grow: 1;
+}
+
+.nav-menu a {
+    color: #cbd5e1;
+    text-decoration: none;
+    padding: 10px 14px;
+    border-radius: 6px;
+    transition: background 0.2s;
+}
+
+.nav-menu a.active, .nav-menu a:hover {
+    background: #1e293b;
+    color: #fff;
+}
+
+.btn-logout {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+/* Main Content */
+.main-content {
+    flex-grow: 1;
+    padding: 32px;
+}
+
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.search-bar input {
+    padding: 10px 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    width: 280px;
+    outline: none;
+}
+
+.card-section {
+    background: white;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    margin-bottom: 24px;
+}
+
+.card-section h3 {
+    margin-bottom: 16px;
+    color: #1e293b;
+}
+
+/* Form Grid */
+.grid-form {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.full-width {
+    grid-column: span 2;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475569;
+}
+
+.form-group input, .form-group select {
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    outline: none;
+}
+
+.btn-primary {
+    background: #2563eb;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* Tabela */
+.table-container {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+th {
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.btn-status {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: none;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.btn-status.pago { background: #dcfce7; color: #15803d; }
+.btn-status.pendente { background: #fef3c7; color: #b45309; }
+
+.btn-action.delete {
+    background: #fee2e2;
+    color: #dc2626;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+/* Auth Pages (Login / Registro) */
+.auth-body {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.auth-card {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 400px;
+}
+
+.auth-header h2 { font-size: 22px; color: #0f172a; }
+.auth-header p { font-size: 14px; color: #64748b; margin-bottom: 24px; }
+
+.full-btn { width: 100%; margin-top: 12px; }
+
+.auth-alert {
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    display: none;
+}
+
+.auth-alert.danger { background: #fee2e2; color: #dc2626; }
+.auth-alert.success { background: #dcfce7; color: #15803d; }
+.auth-alert.info { background: #e0f2fe; color: #0369a1; }
+
+.auth-footer { margin-top: 20px; text-align: center; font-size: 13px; }
+.auth-footer a { color: #2563eb; text-decoration: none; font-weight: 600; }

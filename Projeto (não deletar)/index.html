@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hotel Master - Gestão Completa</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { display: flex; background: #f4f6f9; color: #333; height: 100vh; overflow: hidden; }
+        /* ===== Sidebar ===== */
+        .sidebar { width: 264px; background: #111827; color: #fff; display: flex; flex-direction: column; padding: 20px 14px; overflow-y: auto; flex-shrink: 0; }
+        .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; }
+        .brand-icon { width: 38px; height: 38px; border-radius: 10px; background: linear-gradient(135deg, #3498db, #2563eb); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+        .brand-text { font-size: 17px; font-weight: 700; line-height: 1.15; }
+        .brand-text small { display: block; font-size: 11px; font-weight: 400; color: #9ca3af; }
+        .user-card { display: flex; align-items: center; gap: 10px; background: #1f2937; padding: 10px 12px; border-radius: 10px; margin-bottom: 18px; }
+        .user-card .avatar { width: 34px; height: 34px; border-radius: 50%; background: #3498db; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+        .user-card strong { font-size: 13px; display: block; }
+        .user-card span { font-size: 10px; color: #9ca3af; letter-spacing: .5px; }
+        .menu-titulo { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #6b7280; padding: 0 12px 8px; }
+
+        .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+        .sidebar nav a { display: flex; align-items: center; gap: 10px; color: #9ca3af; text-decoration: none; padding: 10px 12px; border-radius: 8px; border-left: 3px solid transparent; transition: background .15s, color .15s; font-size: 14px; cursor: pointer; user-select: none; }
+        .sidebar nav a:hover { background: #1f2937; color: #fff; }
+        .sidebar nav a.active { background: rgba(52,152,219,.16); color: #fff; border-left-color: #3498db; font-weight: 600; }
+        .sidebar nav a.oculto { opacity: .45; font-style: italic; }
+        .menu-icone { width: 22px; text-align: center; font-size: 16px; }
+        .menu-nome { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* Controles só aparecem no modo de edição */
+        .menu-controls { display: none; gap: 3px; }
+        .sidebar.editando .menu-controls { display: flex; }
+        .menu-btn { background: rgba(255,255,255,.1); border: none; color: #fff; width: 22px; height: 22px; border-radius: 5px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .menu-btn:hover:not(:disabled) { background: rgba(255,255,255,.3); }
+        .menu-btn:disabled { opacity: .25; cursor: default; }
+
+        .sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid #1f2937; display: flex; flex-direction: column; gap: 8px; }
+        .btn-menu-editar, .btn-menu-restaurar, .btn-sair { width: 100%; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; border: 1px solid transparent; }
+        .btn-menu-editar { background: #1f2937; color: #e5e7eb; border-color: #374151; }
+        .btn-menu-editar:hover { background: #374151; }
+        .sidebar.editando .btn-menu-editar { background: #3498db; color: #fff; border-color: #3498db; }
+        .btn-menu-restaurar { background: transparent; color: #9ca3af; border-color: #374151; font-size: 12px; }
+        .btn-menu-restaurar:hover { color: #fff; border-color: #6b7280; }
+        .btn-sair { background: transparent; color: #f87171; }
+        .btn-sair:hover { background: rgba(248,113,113,.12); }
+
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+        header { background: white; padding: 15px 30px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+        .content-body { padding: 30px; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+        th { background: #f8f9fa; color: #333; }
+        .badge { padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; }
+        .badge.disponivel { background: #d4edda; color: #155724; }
+        .badge.ocupado { background: #fff3cd; color: #856404; }
+        .badge.pendente { background: #f8d7da; color: #721c24; }
+        .btn { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .btn-danger { background: #e74c3c; color: white; }
+        .btn-primary { background: #3498db; color: white; }
+        .btn-success { background: #2ecc71; color: white; }
+        .btn-secondary { background: #7f8c8d; color: white; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group label { margin-bottom: 5px; font-weight: 600; font-size: 13px; }
+        .form-group input, .form-group select { padding: 9px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; width: 100%; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top: 15px; }
+        .metric-card { background: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; }
+        .metric-card h5 { color: #666; font-size: 12px; margin-bottom: 5px; }
+        .metric-card p { font-size: 20px; font-weight: bold; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="sidebar" id="sidebar">
+        <div class="brand">
+            <div class="brand-icon">🏨</div>
+            <div class="brand-text">Hotel Master<small>Gestão hoteleira</small></div>
+        </div>
+        <div class="user-card">
+            <div class="avatar">A</div>
+            <div><strong>Administrador</strong><span>USER</span></div>
+        </div>
+
+        <div class="menu-titulo">Menu</div>
+        <nav id="menu-lateral">
+            <!-- Gerado dinamicamente -->
+        </nav>
+
+        <div class="sidebar-footer">
+            <button type="button" id="btn-editar-menu" class="btn-menu-editar" onclick="alternarEdicaoMenu()">✏️ Editar menu</button>
+            <button type="button" id="btn-restaurar-menu" class="btn-menu-restaurar" style="display:none;" onclick="restaurarMenuPadrao()">↺ Restaurar padrão</button>
+            <a href="/logout" class="btn-sair">⎋ Sair</a>
+        </div>
+    </div>
+
+
+    <div class="main-content">
+        <header>
+            <h3 id="page-title">Gerenciamento de Quartos</h3>
+        </header>
+        <div class="content-body">
+            
+            <!-- ABA QUARTOS -->
+            <div id="tab-quartos" class="tab-content active">
+                <div class="card">
+                    <h4>Cadastrar Novo Quarto</h4>
+                    <form id="form-quarto" onsubmit="criarQuarto(event)" class="form-grid">
+                        <div class="form-group"><label>Número</label><input type="text" id="q-numero" placeholder="ex: 103" required></div>
+                        <div class="form-group"><label>Tipo</label><input type="text" id="q-tipo" placeholder="ex: Casal Deluxe" required></div>
+                        <div class="form-group"><label>Preço Diária Base (R$)</label><input type="number" step="0.01" id="q-preco" required></div>
+                        <div class="form-group" style="justify-content: flex-end;"><button type="submit" class="btn btn-primary" style="margin-top: 22px;">Cadastrar</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Quartos Cadastrados</h4>
+                    <table>
+                        <thead><tr><th>Número</th><th>Tipo</th><th>Diária Base</th><th>Status</th><th>Ações</th></tr></thead>
+                        <tbody id="tabela-quartos"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA HÓSPEDES -->
+            <div id="tab-hospedes" class="tab-content">
+                <div class="card">
+                    <h4>Novo Hóspede</h4>
+                    <form id="form-hospede" onsubmit="criarHospede(event)" class="form-grid">
+                        <div class="form-group"><label>Nome</label><input type="text" id="h-nome" required></div>
+                        <div class="form-group"><label>Documento</label><input type="text" id="h-doc"></div>
+                        <div class="form-group"><label>Telefone</label><input type="text" id="h-tel"></div>
+                        <div class="form-group"><label>E-mail</label><input type="email" id="h-email"></div>
+                        <div class="form-group" style="grid-column: span 2;"><button type="submit" class="btn btn-primary">Salvar Hóspede</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Hóspedes Cadastrados</h4>
+                    <table>
+                        <thead><tr><th>Nome</th><th>Documento</th><th>Telefone</th><th>E-mail</th></tr></thead>
+                        <tbody id="tabela-hospedes"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA FAIXAS ETÁRIAS -->
+            <div id="tab-faixas" class="tab-content">
+                <div class="card">
+                    <h4>Cadastrar Faixa Etária</h4>
+                    <form id="form-faixa" onsubmit="criarFaixa(event)" class="form-grid">
+                        <div class="form-group"><label>Nome (ex: Criança, Adulto, Idoso)</label><input type="text" id="fe-nome" required></div>
+                        <div class="form-group"><label>Idade Mínima</label><input type="number" id="fe-min" required></div>
+                        <div class="form-group"><label>Idade Máxima</label><input type="number" id="fe-max" required></div>
+                        <div class="form-group"><label>Multiplicador de Preço (ex: 0.5 = 50%)</label><input type="number" step="0.01" id="fe-mult" value="1.0" required></div>
+                        <div class="form-group" style="justify-content: flex-end;"><button type="submit" class="btn btn-primary" style="margin-top: 22px;">Salvar Faixa</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Faixas Etárias Cadastradas</h4>
+                    <table>
+                        <thead><tr><th>Nome</th><th>Idade</th><th>Multiplicador</th><th>Ações</th></tr></thead>
+                        <tbody id="tabela-faixas"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA RESERVAS -->
+            <div id="tab-reservas" class="tab-content">
+                <div class="card">
+                    <h4>Efetuar Reserva (Com Pessoas e Preços)</h4>
+                    <form id="form-reserva" onsubmit="criarReserva(event)" class="form-grid">
+                        <div class="form-group"><label>ID Hóspede Principal</label><input type="number" id="r-hospede-id" required></div>
+                        <div class="form-group"><label>Número do Quarto</label><input type="text" id="r-quarto-num" required></div>
+                        <div class="form-group"><label>Check-in</label><input type="date" id="r-checkin" required></div>
+                        <div class="form-group"><label>Check-out</label><input type="date" id="r-checkout" required></div>
+                        <div class="form-group"><label>Quantidade de Diárias</label><input type="number" id="r-diarias" value="1" required></div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label>Composição de Hóspedes por Faixa Etária</label>
+                            <div id="container-faixas-reserva" style="display: flex; gap: 15px; margin-top: 8px; flex-wrap: wrap;"></div>
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;"><button type="submit" class="btn btn-primary">Calcular e Salvar Reserva</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Lista de Reservas</h4>
+                    <table>
+                        <thead><tr><th>ID</th><th>Hóspede ID</th><th>Quarto</th><th>Check-in / Out</th><th>Composição</th><th>Diárias</th><th>Total (R$)</th><th>Status</th></tr></thead>
+                        <tbody id="tabela-reservas"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA ESTOQUE & PDV -->
+            <div id="tab-estoque" class="tab-content">
+                <div class="card">
+                    <h4>Adicionar Produto ao Estoque / PDV</h4>
+                    <form id="form-estoque" onsubmit="criarEstoque(event)" class="form-grid">
+                        <div class="form-group"><label>Nome do Item</label><input type="text" id="e-item" required></div>
+                        <div class="form-group"><label>Categoria</label><input type="text" id="e-cat" required></div>
+                        <div class="form-group"><label>Quantidade</label><input type="number" id="e-qtd" required></div>
+                        <div class="form-group"><label>Preço Unitário (R$)</label><input type="number" step="0.01" id="e-preco" required></div>
+                        <div class="form-group" style="justify-content: flex-end;"><button type="submit" class="btn btn-primary" style="margin-top: 22px;">Adicionar</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Itens em Estoque</h4>
+                    <table>
+                        <thead><tr><th>Item</th><th>Categoria</th><th>Quantidade</th><th>Preço Unitário</th><th>Ações</th></tr></thead>
+                        <tbody id="tabela-estoque"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA FINANCEIRO -->
+            <div id="tab-financeiro" class="tab-content">
+                <div class="card">
+                    <h4>Novo Lançamento Financeiro (Caixa)</h4>
+                    <form id="form-financeiro" onsubmit="criarFinanceiro(event)" class="form-grid">
+                        <div class="form-group">
+                            <label>Tipo</label>
+                            <select id="f-tipo"><option value="ENTRADA">ENTRADA</option><option value="SAIDA">SAÍDA</option></select>
+                        </div>
+                        <div class="form-group"><label>Descrição</label><input type="text" id="f-desc" required></div>
+                        <div class="form-group"><label>Valor (R$)</label><input type="number" step="0.01" id="f-valor" required></div>
+                        <div class="form-group"><label>Categoria</label><input type="text" id="f-cat" value="Geral" required></div>
+                        <div class="form-group" style="justify-content: flex-end;"><button type="submit" class="btn btn-primary" style="margin-top: 22px;">Lançar</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Fluxo de Caixa</h4>
+                    <table>
+                        <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Valor</th></tr></thead>
+                        <tbody id="tabela-financeiro"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA ORDENS DE SERVIÇO -->
+            <div id="tab-ordens" class="tab-content">
+                <div class="card">
+                    <h4>Nova Ordem de Serviço</h4>
+                    <form id="form-ordem" onsubmit="criarOrdem(event)" class="form-grid">
+                        <div class="form-group"><label>Quarto</label><input type="text" id="os-quarto" placeholder="ex: 101" required></div>
+                        <div class="form-group">
+                            <label>Tipo</label>
+                            <select id="os-tipo"><option value="Limpeza">Limpeza</option><option value="Manutenção Elétrica">Manutenção Elétrica</option><option value="Manutenção Hidráulica">Manutenção Hidráulica</option><option value="Outros">Outros</option></select>
+                        </div>
+                        <div class="form-group"><label>Descrição</label><input type="text" id="os-desc" required></div>
+                        <div class="form-group" style="justify-content: flex-end;"><button type="submit" class="btn btn-primary" style="margin-top: 22px;">Criar OS</button></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h4>Ordens de Serviço</h4>
+                    <table>
+                        <thead><tr><th>ID</th><th>Quarto</th><th>Tipo</th><th>Descrição</th><th>Status</th><th>Ação</th></tr></thead>
+                        <tbody id="tabela-ordens"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- ABA RELATÓRIOS -->
+            <div id="tab-relatorios" class="tab-content">
+                <div class="card">
+                    <h4>Relatórios Gerenciais Avançados</h4>
+                    <div class="metrics-grid" id="dados-relatorio">Carregando métricas...</div>
+                </div>
+            </div>
+
+            <!-- ABA WHATSAPP -->
+            <div id="tab-whatsapp" class="tab-content">
+                <div class="card">
+                    <h4>Central de Mensagens WhatsApp</h4>
+                    <div class="form-grid">
+                        <div class="form-group"><label>Telefone do Hóspede (com DDD)</label><input type="text" id="wa-tel" placeholder="5561999999999"></div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label>Modelo de Mensagem</label>
+                            <select id="wa-template" onchange="preencherTemplateWhatsApp()">
+                                <option value="Olá! Sua reserva no Hotel Master está confirmada. Aguardamos sua visita!">Confirmação de Reserva</option>
+                                <option value="Olá! Lembramos que seu check-out é amanhã. Tenha uma excelente estadia!">Lembrete de Check-out</option>
+                                <option value="Olá! Agradecemos sua estadia no Hotel Master. Esperamos vê-lo em breve!">Agradecimento Pós-Estadia</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;"><label>Mensagem Personalizada</label><input type="text" id="wa-msg"></div>
+                        <div class="form-group"><button type="button" class="btn btn-success" onclick="enviarWhatsApp()">Enviar via WhatsApp</button></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let faixasGlobais = [];
+
+        // ===== Menu lateral personalizável =====
+        const MENU_KEY = 'hotel_master_menu_v2';
+        let abaAtual = 'quartos';
+        let menuEditando = false;
+
+        const menuItensPadrao = [
+            { id: 'quartos',    icone: '🛏️', nome: 'Quartos',               visivel: true },
+            { id: 'hospedes',   icone: '👥', nome: 'Hóspedes',              visivel: true },
+            { id: 'faixas',     icone: '⚙️', nome: 'Faixas Etárias',        visivel: true },
+            { id: 'reservas',   icone: '📅', nome: 'Reservas & Preços',     visivel: true },
+            { id: 'estoque',    icone: '🛒', nome: 'PDV & Estoque',         visivel: true },
+            { id: 'financeiro', icone: '💰', nome: 'Financeiro',            visivel: true },
+            { id: 'ordens',     icone: '🛠️', nome: 'Ordens de Serviço',     visivel: true },
+            { id: 'relatorios', icone: '📊', nome: 'Relatórios (ADR/RevPAR)', visivel: true },
+            { id: 'whatsapp',   icone: '💬', nome: 'WhatsApp',              visivel: true }
+        ];
+
+        function lerJsonLocal(chave) {
+            try { return JSON.parse(localStorage.getItem(chave)); } catch (e) { return null; }
+        }
+
+        // Junta o que está salvo com o padrão: mantém ordem/visibilidade/nome salvos
+        // e acrescenta automaticamente itens novos que ainda não existiam no salvo.
+        function obterMenuConfig() {
+            let salvo = lerJsonLocal(MENU_KEY);
+            if (!Array.isArray(salvo)) salvo = lerJsonLocal('hotel_master_menu'); // migra o formato antigo
+            const padrao = JSON.parse(JSON.stringify(menuItensPadrao));
+            if (!Array.isArray(salvo)) return padrao;
+
+            const resultado = [];
+            salvo.forEach(s => {
+                const p = padrao.find(x => x.id === s.id);
+                if (!p) return;
+                const nomePersonalizado = (s.icone && typeof s.nome === 'string' && s.nome.trim()) ? s.nome.trim() : p.nome;
+                resultado.push({ ...p, nome: nomePersonalizado, visivel: s.visivel !== false });
+            });
+            padrao.forEach(p => { if (!resultado.some(r => r.id === p.id)) resultado.push(p); });
+            return resultado;
+        }
+
+        function salvarMenuConfig(menu) {
+            localStorage.setItem(MENU_KEY, JSON.stringify(menu));
+            renderizarMenu();
+        }
+
+        function criarBotaoMenu(texto, titulo, desabilitado, acao) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'menu-btn';
+            b.textContent = texto;
+            b.title = titulo;
+            b.disabled = desabilitado;
+            b.addEventListener('click', (ev) => { ev.stopPropagation(); acao(); });
+            return b;
+        }
+
+        function renderizarMenu() {
+            const menu = obterMenuConfig();
+            const nav = document.getElementById('menu-lateral');
+            nav.innerHTML = '';
+
+            menu.forEach((item, index) => {
+                if (!item.visivel && !menuEditando) return;
+
+                const a = document.createElement('a');
+                a.dataset.id = item.id;
+                if (item.id === abaAtual && item.visivel) a.classList.add('active');
+                if (!item.visivel) a.classList.add('oculto');
+
+                const icone = document.createElement('span');
+                icone.className = 'menu-icone';
+                icone.textContent = item.icone;
+
+                const nome = document.createElement('span');
+                nome.className = 'menu-nome';
+                nome.textContent = item.nome;
+
+                const controles = document.createElement('div');
+                controles.className = 'menu-controls';
+                controles.appendChild(criarBotaoMenu('▲', 'Subir', index === 0, () => moverMenu(index, -1)));
+                controles.appendChild(criarBotaoMenu('▼', 'Descer', index === menu.length - 1, () => moverMenu(index, 1)));
+                controles.appendChild(criarBotaoMenu('✎', 'Renomear', false, () => renomearMenu(index)));
+                controles.appendChild(item.visivel
+                    ? criarBotaoMenu('✕', 'Ocultar', false, () => alternarVisibilidadeMenu(index))
+                    : criarBotaoMenu('＋', 'Mostrar', false, () => alternarVisibilidadeMenu(index)));
+
+                a.append(icone, nome, controles);
+                a.addEventListener('click', () => { if (item.visivel) switchTab(item.id); });
+                nav.appendChild(a);
+            });
+        }
+
+        function moverMenu(index, direcao) {
+            const menu = obterMenuConfig();
+            const novoIndex = index + direcao;
+            if (novoIndex < 0 || novoIndex >= menu.length) return;
+            [menu[index], menu[novoIndex]] = [menu[novoIndex], menu[index]];
+            salvarMenuConfig(menu);
+        }
+
+        function alternarVisibilidadeMenu(index) {
+            const menu = obterMenuConfig();
+            menu[index].visivel = !menu[index].visivel;
+            salvarMenuConfig(menu);
+        }
+
+        function renomearMenu(index) {
+            const menu = obterMenuConfig();
+            const novo = prompt('Novo nome para este item do menu:', menu[index].nome);
+            if (novo === null) return;
+            const limpo = novo.trim();
+            if (!limpo) return;
+            menu[index].nome = limpo.slice(0, 40);
+            salvarMenuConfig(menu);
+            atualizarTituloPagina();
+        }
+
+        function alternarEdicaoMenu() {
+            menuEditando = !menuEditando;
+            document.getElementById('sidebar').classList.toggle('editando', menuEditando);
+            document.getElementById('btn-editar-menu').textContent = menuEditando ? '✔ Concluir edição' : '✏️ Editar menu';
+            document.getElementById('btn-restaurar-menu').style.display = menuEditando ? 'block' : 'none';
+            renderizarMenu();
+        }
+
+        function restaurarMenuPadrao() {
+            if (!confirm('Restaurar o menu para a ordem e os nomes originais?')) return;
+            localStorage.removeItem(MENU_KEY);
+            localStorage.removeItem('hotel_master_menu');
+            switchTab('quartos');
+        }
+
+        function atualizarTituloPagina() {
+            const item = obterMenuConfig().find(i => i.id === abaAtual);
+            document.getElementById('page-title').innerText = item ? item.nome : 'Painel';
+        }
+
+        function switchTab(tabName) {
+            abaAtual = tabName;
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            const aba = document.getElementById('tab-' + tabName);
+            if (aba) aba.classList.add('active');
+            atualizarTituloPagina();
+            renderizarMenu(); // atualiza o item destacado
+
+            if(tabName === 'quartos') carregarQuartos();
+            if(tabName === 'hospedes') carregarHospedes();
+            if(tabName === 'faixas') carregarFaixas();
+            if(tabName === 'reservas') { carregarFaixasParaReserva(); carregarReservas(); }
+            if(tabName === 'estoque') carregarEstoque();
+            if(tabName === 'financeiro') carregarFinanceiro();
+            if(tabName === 'ordens') carregarOrdens();
+            if(tabName === 'relatorios') carregarRelatorios();
+            if(tabName === 'whatsapp') preencherTemplateWhatsApp();
+        }
+
+        async function carregarQuartos() {
+            const res = await fetch('/api/quartos');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-quartos');
+            tbody.innerHTML = '';
+            data.forEach(q => {
+                tbody.innerHTML += `<tr>
+                    <td><b>${q.numero}</b></td>
+                    <td>${q.tipo}</td>
+                    <td>R$ ${q.preco_diaria.toFixed(2)}</td>
+                    <td><span class="badge ${q.status.toLowerCase()}">${q.status}</span></td>
+                    <td><button class="btn btn-danger" onclick="deletarQuarto('${q.numero}')">Excluir</button></td>
+                </tr>`;
+            });
+        }
+
+        async function criarQuarto(e) {
+            e.preventDefault();
+            await fetch('/api/quartos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    numero: document.getElementById('q-numero').value,
+                    tipo: document.getElementById('q-tipo').value,
+                    preco_diaria: parseFloat(document.getElementById('q-preco').value),
+                    status: 'DISPONIVEL'
+                })
+            });
+            document.getElementById('form-quarto').reset();
+            carregarQuartos();
+        }
+
+        async function deletarQuarto(numero) {
+            if(!confirm('Deseja excluir este quarto?')) return;
+            await fetch(`/api/quartos/${numero}`, { method: 'DELETE' });
+            carregarQuartos();
+        }
+
+        async function carregarHospedes() {
+            const res = await fetch('/api/hospedes');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-hospedes');
+            tbody.innerHTML = '';
+            data.forEach(h => {
+                tbody.innerHTML += `<tr><td>${h.nome}</td><td>${h.documento || '-'}</td><td>${h.telefone || '-'}</td><td>${h.email || '-'}</td></tr>`;
+            });
+        }
+
+        async function criarHospede(e) {
+            e.preventDefault();
+            await fetch('/api/hospedes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nome: document.getElementById('h-nome').value,
+                    documento: document.getElementById('h-doc').value,
+                    telefone: document.getElementById('h-tel').value,
+                    email: document.getElementById('h-email').value
+                })
+            });
+            document.getElementById('form-hospede').reset();
+            carregarHospedes();
+        }
+
+        async function carregarFaixas() {
+            const res = await fetch('/api/faixas_etarias');
+            faixasGlobais = await res.json();
+            const tbody = document.getElementById('tabela-faixas');
+            tbody.innerHTML = '';
+            faixasGlobais.forEach(f => {
+                tbody.innerHTML += `<tr>
+                    <td><b>${f.nome}</b></td>
+                    <td>${f.idade_min} a ${f.idade_max} anos</td>
+                    <td>${f.multiplicador}x</td>
+                    <td><button class="btn btn-danger" onclick="deletarFaixa(${f.id})">Excluir</button></td>
+                </tr>`;
+            });
+        }
+
+        async function criarFaixa(e) {
+            e.preventDefault();
+            await fetch('/api/faixas_etarias', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nome: document.getElementById('fe-nome').value,
+                    idade_min: parseInt(document.getElementById('fe-min').value),
+                    idade_max: parseInt(document.getElementById('fe-max').value),
+                    multiplicador: parseFloat(document.getElementById('fe-mult').value)
+                })
+            });
+            document.getElementById('form-faixa').reset();
+            carregarFaixas();
+        }
+
+        async function deletarFaixa(id) {
+            if(!confirm('Deseja excluir esta faixa etária?')) return;
+            await fetch(`/api/faixas_etarias/${id}`, { method: 'DELETE' });
+            carregarFaixas();
+        }
+
+        async function carregarFaixasParaReserva() {
+            const res = await fetch('/api/faixas_etarias');
+            faixasGlobais = await res.json();
+            const container = document.getElementById('container-faixas-reserva');
+            container.innerHTML = '';
+            faixasGlobais.forEach(f => {
+                container.innerHTML += `
+                    <div style="flex: 1; min-width: 120px;">
+                        <label style="font-size: 12px;">${f.nome} (${f.multiplicador}x)</label>
+                        <input type="number" class="faixa-input" data-id="${f.id}" value="${f.nome.toLowerCase() === 'adulto' ? 1 : 0}" min="0">
+                    </div>
+                `;
+            });
+        }
+
+        async function criarReserva(e) {
+            e.preventDefault();
+            const composicao = [];
+            document.querySelectorAll('.faixa-input').forEach(inp => {
+                composicao.push({ faixa_id: parseInt(inp.getAttribute('data-id')), quantidade: parseInt(inp.value) });
+            });
+
+            const res = await fetch('/api/reservas', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    hospede_id: parseInt(document.getElementById('r-hospede-id').value),
+                    quarto_numero: document.getElementById('r-quarto-num').value,
+                    check_in: document.getElementById('r-checkin').value,
+                    check_out: document.getElementById('r-checkout').value,
+                    diarias: parseInt(document.getElementById('r-diarias').value),
+                    composicao: composicao
+                })
+            });
+            const data = await res.json();
+            if(res.ok) {
+                alert(`Reserva efetuada com sucesso! Valor Total: R$ ${data.valor_total.toFixed(2)}`);
+                document.getElementById('form-reserva').reset();
+                carregarReservas();
+            } else {
+                alert('Erro ao criar reserva: ' + (data.erro || 'Erro desconhecido'));
+            }
+        }
+
+        async function carregarReservas() {
+            const res = await fetch('/api/reservas');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-reservas');
+            tbody.innerHTML = '';
+            data.forEach(r => {
+                tbody.innerHTML += `<tr>
+                    <td>${r.id}</td>
+                    <td>${r.hospede_id} (${r.hospede_nome || 'N/D'})</td>
+                    <td><b>${r.quarto_numero}</b></td>
+                    <td>${r.check_in} até ${r.check_out}</td>
+                    <td>${r.detalhes_pessoas}</td>
+                    <td>${r.diarias}</td>
+                    <td>R$ ${r.valor_total.toFixed(2)}</td>
+                    <td><span class="badge ${r.status_pagamento.toLowerCase()}">${r.status_pagamento}</span></td>
+                </tr>`;
+            });
+        }
+
+        async function carregarEstoque() {
+            const res = await fetch('/api/estoque');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-estoque');
+            tbody.innerHTML = '';
+            data.forEach(i => {
+                tbody.innerHTML += `<tr>
+                    <td><b>${i.item}</b></td>
+                    <td>${i.categoria}</td>
+                    <td>${i.quantidade}</td>
+                    <td>R$ ${i.preco_unitario.toFixed(2)}</td>
+                    <td><button class="btn btn-danger" onclick="deletarEstoque(${i.id})">Excluir</button></td>
+                </tr>`;
+            });
+        }
+
+        async function criarEstoque(e) {
+            e.preventDefault();
+            await fetch('/api/estoque', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    item: document.getElementById('e-item').value,
+                    categoria: document.getElementById('e-cat').value,
+                    quantidade: parseInt(document.getElementById('e-qtd').value),
+                    preco_unitario: parseFloat(document.getElementById('e-preco').value)
+                })
+            });
+            document.getElementById('form-estoque').reset();
+            carregarEstoque();
+        }
+
+        async function deletarEstoque(id) {
+            if(!confirm('Remover item?')) return;
+            await fetch(`/api/estoque/${id}`, { method: 'DELETE' });
+            carregarEstoque();
+        }
+
+        async function carregarFinanceiro() {
+            const res = await fetch('/api/financeiro');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-financeiro');
+            tbody.innerHTML = '';
+            data.forEach(f => {
+                tbody.innerHTML += `<tr>
+                    <td>${f.data}</td>
+                    <td><b>${f.tipo}</b></td>
+                    <td>${f.descricao}</td>
+                    <td>${f.categoria}</td>
+                    <td style="color: ${f.tipo === 'ENTRADA' ? 'green' : 'red'};">R$ ${f.valor.toFixed(2)}</td>
+                </tr>`;
+            });
+        }
+
+        async function criarFinanceiro(e) {
+            e.preventDefault();
+            await fetch('/api/financeiro', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tipo: document.getElementById('f-tipo').value,
+                    descricao: document.getElementById('f-desc').value,
+                    valor: parseFloat(document.getElementById('f-valor').value),
+                    categoria: document.getElementById('f-cat').value
+                })
+            });
+            document.getElementById('form-financeiro').reset();
+            carregarFinanceiro();
+        }
+
+        async function carregarOrdens() {
+            const res = await fetch('/api/ordens');
+            const data = await res.json();
+            const tbody = document.getElementById('tabela-ordens');
+            tbody.innerHTML = '';
+            data.forEach(o => {
+                tbody.innerHTML += `<tr>
+                    <td>${o.id}</td>
+                    <td><b>${o.quarto}</b></td>
+                    <td>${o.tipo}</td>
+                    <td>${o.descricao}</td>
+                    <td><span class="badge ${o.status === 'CONCLUIDA' ? 'disponivel' : 'pendente'}">${o.status}</span></td>
+                    <td>${o.status !== 'CONCLUIDA' ? `<button class="btn btn-success" onclick="concluirOrdem(${o.id})">Concluir</button>` : '-'}</td>
+                </tr>`;
+            });
+        }
+
+        async function criarOrdem(e) {
+            e.preventDefault();
+            await fetch('/api/ordens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    quarto: document.getElementById('os-quarto').value,
+                    tipo: document.getElementById('os-tipo').value,
+                    descricao: document.getElementById('os-desc').value
+                })
+            });
+            document.getElementById('form-ordem').reset();
+            carregarOrdens();
+        }
+
+        async function concluirOrdem(id) {
+            await fetch(`/api/ordens/${id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'CONCLUIDA' })
+            });
+            carregarOrdens();
+        }
+
+        async function carregarRelatorios() {
+            const res = await fetch('/api/relatorios');
+            const data = await res.json();
+            document.getElementById('dados-relatorio').innerHTML = `
+                <div class="metric-card"><h5>Total de Quartos</h5><p>${data.total_quartos}</p></div>
+                <div class="metric-card"><h5>Quartos Ocupados</h5><p>${data.quartos_ocupados}</p></div>
+                <div class="metric-card"><h5>Taxa de Ocupação</h5><p>${data.taxa_ocupacao}%</p></div>
+                <div class="metric-card"><h5>Receita Total</h5><p>R$ ${data.receita_total.toFixed(2)}</p></div>
+                <div class="metric-card"><h5>ADR (Diária Média)</h5><p>R$ ${data.adr.toFixed(2)}</p></div>
+                <div class="metric-card"><h5>RevPAR</h5><p>R$ ${data.revpar.toFixed(2)}</p></div>
+            `;
+        }
+
+        function preencherTemplateWhatsApp() {
+            document.getElementById('wa-msg').value = document.getElementById('wa-template').value;
+        }
+
+        function enviarWhatsApp() {
+            const tel = document.getElementById('wa-tel').value.trim();
+            const msg = encodeURIComponent(document.getElementById('wa-msg').value);
+            if(!tel) { alert('Informe o telefone!'); return; }
+            window.open(`https://api.whatsapp.com/send?phone=${tel}&text=${msg}`, '_blank');
+        }
+
+        // Inicialização
+        // Abre na primeira aba visível do menu (respeitando a ordem personalizada)
+        const primeiraAba = obterMenuConfig().find(i => i.visivel);
+        switchTab(primeiraAba ? primeiraAba.id : 'quartos');
+    </script>
+</body>
+</html>

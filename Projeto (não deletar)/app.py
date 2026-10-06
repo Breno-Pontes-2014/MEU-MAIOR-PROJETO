@@ -1668,6 +1668,18 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
     </div>
 
     <script>
+        const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const ORIGINAL_FETCH = window.fetch.bind(window);
+        window.fetch = function(input, init = {}) {
+            const method = (init.method || 'GET').toUpperCase();
+            if (['POST','PUT','PATCH','DELETE'].includes(method)) {
+                const headers = new Headers(init.headers || {});
+                if (CSRF_TOKEN) headers.set('X-CSRFToken', CSRF_TOKEN);
+                init = { ...init, headers };
+            }
+            return ORIGINAL_FETCH(input, init);
+        };
+
         let faixasGlobais = [];
 
         const MENU_KEY = 'hotel_master_menu_v2';

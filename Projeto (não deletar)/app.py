@@ -956,6 +956,57 @@ def sincronizar_status_quartos(conn, hotel_id):
             status='RESERVADO' if futuro else 'DISPONIVEL'
         conn.execute('UPDATE quartos SET status=? WHERE id=? AND hotel_id=?',(status,q['id'],hotel_id))
 
+def gerar_numeros_quartos(quantidade,inicial,por_andar):
+    if por_andar>0:
+        numeros=[]; andar,pos=divmod(inicial,100)
+        for _ in range(quantidade):
+            numeros.append(str(andar*100+pos)); pos+=1
+            if pos>por_andar: andar+=1; pos=1
+        return numeros
+    return [str(inicial+i) for i in range(quantidade)]
+
+def composicao_reserva(conn,hotel_id,composicao):
+    faixas={f['id']:f for f in conn.execute('SELECT * FROM faixas_etarias WHERE hotel_id=?',(hotel_id,)).fetchall()}
+    extra=0.0; partes=[]
+    for item in composicao if isinstance(composicao,list) else []:
+        try: fid=int(item.get('faixa_id',0)); qtd=int(item.get('quantidade',0))
+        except (TypeError,ValueError): continue
+        if qtd<=0 or fid not in faixas: continue
+        extra+=float(faixas[fid]['valor_adicional'] or 0)*qtd
+        partes.append(f"{qtd}x {faixas[fid]['nome']}")
+    return extra,', '.join(partes) or 'Reserva Padrão'
+
+def reserva_conflito(conn,hotel_id,quarto_numero,check_in,check_out,ignorar_id=None):
+    sql="SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in<? AND check_out>?"
+    params=[hotel_id,quarto_numero,check_out,check_in]
+    if ignorar_id is not None:
+        sql+=" AND id<>?"; params.append(ignorar_id)
+    return conn.execute(sql,tuple(params)).fetchone()
+
+def sincronizar_status_quartos(conn,hotel_id):
+    if not hotel_id: return
+    hoje=datetime.date.today().isoformat()
+    for q in conn.execute('SELECT id,numero,status FROM quartos WHERE hotel_id=?',(hotel_id,)).fetchall():
+        if q['status']=='MANUTENCAO': continue
+        ocupado=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in<=? AND check_out>? LIMIT 1",(hotel_id,q['numero'],hoje,hoje)).fetchone()
+        if ocupado:
+            status='OCUPADO'
+        else:
+            futuro=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in>? ORDER BY check_in LIMIT 1",(hotel_id,q['numero'],hoje)).fetchone()
+            status='RESERVADO' if futuro else 'DISPONIVEL'
+        conn.execute('UPDATE quartos SET status=? WHERE id=? AND hotel_id=?',(status,q['id'],hotel_id))
+
+def registrar_entrada_reserva(conn,reserva_id,forma_pagamento='NÃO INFORMADO'):
+    r=conn.execute('SELECT * FROM reservas WHERE id=? AND hotel_id=?',(reserva_id,g.hotel_id)).fetchone()
+    if not r: raise ValueError('Reserva não encontrada.')
+    if r['financeiro_id']: return r['financeiro_id']
+    cur=conn.cursor()
+    cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,origem_id,forma_pagamento,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                ('ENTRADA',f"Reserva do quarto {r['quarto_numero']} - {r['check_in']} a {r['check_out']}",float(r['valor_total'] or 0),'Hospedagem',datetime.date.today().isoformat(),g.hotel_id,'RESERVA',r['id'],forma_pagamento,g.current_user_id))
+    fid=cur.lastrowid
+    conn.execute("UPDATE reservas SET financeiro_id=?,pago_em=?,pago_por=?,status_pagamento='PAGO' WHERE id=? AND hotel_id=?",(fid,datetime.datetime.utcnow().isoformat(),g.current_user_id,reserva_id,g.hotel_id))
+    return fid
+
 @app.route('/api/quartos', methods=['GET'])
 @token_required
 def listar_quartos(current_user,role):

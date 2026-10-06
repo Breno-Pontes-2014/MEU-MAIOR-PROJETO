@@ -140,7 +140,7 @@ def get_db():
 
 
 TENANT_TABLES = ['quartos','hospedes','faixas_etarias','reservas','estoque','fluxo_caixa','ordens_servico']
-PUBLIC_API_ENDPOINTS_WHEN_EXPIRED = {'api_planos','api_minha_assinatura','api_solicitar_assinatura'}
+PUBLIC_API_ENDPOINTS_WHEN_EXPIRED = {'api_planos','api_assinatura','api_solicitar_plano'}
 DEFAULT_PLANS = [
     ('Teste Grátis', 0.0, 10, 2, 7, 'Teste gratuito por 7 dias'),
     ('Básico', 79.90, 50, 5, 30, 'Até 50 quartos e 5 usuários'),

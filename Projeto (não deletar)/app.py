@@ -2081,6 +2081,24 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
                 </div>
 
                 <div class="card">
+                    <h4>💳 Assinatura do Hotel Master</h4>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Plano</label>
+                            <select id="saas-plano"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Status atual</label>
+                            <input type="text" id="saas-status" readonly>
+                        </div>
+                        <div class="form-group" style="justify-content:flex-end;">
+                            <button type="button" class="btn btn-primary" onclick="contratarPlano()">Abrir Checkout recorrente</button>
+                        </div>
+                    </div>
+                    <p style="font-size:12px;color:#777;margin-top:10px;">O retorno do Checkout não libera o acesso sozinho. A assinatura é atualizada somente depois da confirmação recebida pelo webhook.</p>
+                </div>
+
+                <div class="card">
                     <h4>💳 Webhook de cobrança</h4>
                     <p style="font-size:13px;color:#666;">Para este SaaS, recomendo <b>Asaas</b>. O endpoint abaixo recebe os eventos e valida o token configurado no servidor.</p>
                     <div class="form-group">
@@ -2282,7 +2300,7 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
             if(tabName === 'ordens') carregarOrdens();
             if(tabName === 'relatorios') carregarRelatorios();
             if(tabName === 'whatsapp') preencherTemplateWhatsApp();
-            if(tabName === 'integracoes') carregarIntegracoes();
+            if(tabName === 'integracoes') { carregarIntegracoes(); carregarPlanosSaaS(); }
         }
 
         function escaparHtml(valor) {
@@ -2685,6 +2703,37 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
                 <div class="metric-card"><h5>RevPAR</h5><p>R$ ${data.revpar.toFixed(2)}</p></div>
                 <div class="metric-card" style="border-left-color: #2ecc71;"><h5>Receita Hospedagem Total</h5><p style="color:#2ecc71;">R$ ${data.receita_total.toFixed(2)}</p></div>
             `;
+        }
+
+        async function carregarPlanosSaaS() {
+            const select=document.getElementById('saas-plano');
+            if(!select) return;
+            const res=await fetch('/api/planos');
+            const data=await res.json().catch(()=>[]);
+            select.innerHTML='';
+            (data||[]).forEach(p=>{
+                const opt=document.createElement('option');
+                opt.value=p.id;
+                opt.textContent=p.nome+' — R$ '+Number(p.preco_mensal||0).toFixed(2)+'/mês';
+                select.appendChild(opt);
+            });
+            const subRes=await fetch('/api/assinatura');
+            const sub=await subRes.json().catch(()=>({}));
+            document.getElementById('saas-status').value=sub.status ? (sub.plano_nome+' — '+sub.status) : 'Sem assinatura';
+        }
+
+        async function contratarPlano() {
+            const planoId=parseInt(document.getElementById('saas-plano').value,10);
+            if(!planoId) return;
+            const res=await fetch('/api/assinatura/checkout',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({plano_id:planoId})
+            });
+            const data=await res.json().catch(()=>({}));
+            if(!res.ok){ alert(data.erro||'Não foi possível criar o Checkout.'); return; }
+            if(data.checkout_url) window.open(data.checkout_url,'_blank','noopener,noreferrer');
+            else alert(data.mensagem||'Checkout criado sem URL.');
         }
 
         async function carregarIntegracoes() {

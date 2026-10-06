@@ -939,174 +939,185 @@ def dashboard():
     finally:
         conn.close()
 
+def sincronizar_status_quartos(conn, hotel_id):
+    if not hotel_id: return
+    hoje=datetime.date.today().isoformat()
+    quartos=conn.execute('SELECT id,numero,status FROM quartos WHERE hotel_id=?',(hotel_id,)).fetchall()
+    for q in quartos:
+        if q['status']=='MANUTENCAO':
+            continue
+        ocupado=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in<=? AND check_out>? LIMIT 1",
+                             (hotel_id,q['numero'],hoje,hoje)).fetchone()
+        if ocupado:
+            status='OCUPADO'
+        else:
+            futuro=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in>? ORDER BY check_in LIMIT 1",
+                                (hotel_id,q['numero'],hoje)).fetchone()
+            status='RESERVADO' if futuro else 'DISPONIVEL'
+        conn.execute('UPDATE quartos SET status=? WHERE id=? AND hotel_id=?',(status,q['id'],hotel_id))
+
 @app.route('/api/quartos', methods=['GET'])
 @token_required
-def listar_quartos(current_user, role):
-    conn = get_db()
-    quartos = [dict(row) for row in conn.cursor().execute('SELECT * FROM quartos WHERE hotel_id=? ORDER BY CAST(numero AS INTEGER), numero',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(quartos), 200
+def listar_quartos(current_user,role):
+    conn=get_db()
+    try:
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        return jsonify([dict(x) for x in conn.execute('SELECT * FROM quartos WHERE hotel_id=? ORDER BY CAST(numero AS INTEGER),numero',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
 
 @app.route('/api/quartos', methods=['POST'])
 @token_required
-def criar_quarto(current_user, role):
-    data = request.get_json() or {}
-    numero = data.get('numero')
-    tipo = data.get('tipo', 'Casal Deluxe')
-    preco_diaria = float(data.get('preco_diaria', 200.0))
-
-    conn = get_db()
-    cursor = conn.cursor()
+def criar_quarto(current_user,role):
+    data=request.get_json(silent=True) or {}
+    numero=str(data.get('numero') or '').strip()[:30]; tipo=str(data.get('tipo') or 'Standard').strip()[:80]
+    try: preco=float(data.get('preco_diaria',0))
+    except (TypeError,ValueError): preco=0
+    if not numero or preco<=0: return jsonify({'erro':'Número e diária válida são obrigatórios.'}),400
+    conn=get_db()
     try:
-        cursor.execute(
-            'INSERT INTO quartos (numero, tipo, preco_diaria, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
-            (numero, tipo, preco_diaria, 'DISPONIVEL', g.hotel_id)
-        )
+        if conn.execute('SELECT id FROM quartos WHERE hotel_id=? AND numero=?',(g.hotel_id,numero)).fetchone(): return jsonify({'erro':'Já existe um quarto com este número.'}),409
+        ok,erro=enforce_room_quota(conn,1)
+        if not ok: return jsonify({'erro':erro}),403
+        conn.execute('INSERT INTO quartos (numero,tipo,preco_diaria,status,hotel_id) VALUES (?,?,?,?,?)',(numero,tipo,preco,'DISPONIVEL',g.hotel_id))
+        conn.commit(); return jsonify({'mensagem':'Quarto cadastrado com sucesso.'}),201
+    finally: conn.close()
+
+@app.route('/api/quartos/lote',methods=['POST'])
+@token_required
+def criar_quartos_lote(current_user,role):
+    data=request.get_json(silent=True) or {}
+    try: quantidade=int(data.get('quantidade',0)); inicial=int(data.get('numero_inicial',101)); por_andar=int(data.get('por_andar',0)); preco=float(data.get('preco_diaria',0))
+    except (TypeError,ValueError): return jsonify({'erro':'Valores numéricos inválidos.'}),400
+    tipo=str(data.get('tipo') or 'Standard').strip()[:80] or 'Standard'
+    if quantidade<1 or quantidade>500: return jsonify({'erro':'A quantidade deve ficar entre 1 e 500.'}),400
+    if inicial<1: return jsonify({'erro':'O primeiro número deve ser maior que zero.'}),400
+    if por_andar<0 or por_andar>99: return jsonify({'erro':'Quartos por andar deve ficar entre 0 e 99.'}),400
+    if por_andar>0 and (inicial%100<1 or inicial%100>por_andar): return jsonify({'erro':'Primeiro número incompatível com os quartos por andar.'}),400
+    if preco<=0: return jsonify({'erro':'A diária base deve ser maior que zero.'}),400
+    numeros=gerar_numeros_quartos(quantidade,inicial,por_andar)
+    conn=get_db()
+    try:
+        existentes=sum(1 for n in numeros if conn.execute('SELECT id FROM quartos WHERE hotel_id=? AND numero=?',(str(n),g.hotel_id)).fetchone())
+        ok,erro=enforce_room_quota(conn,quantidade-existentes)
+        if not ok: return jsonify({'erro':erro}),403
+        criados=0
+        for numero in numeros:
+            if conn.execute('SELECT id FROM quartos WHERE hotel_id=? AND numero=?',(str(numero),g.hotel_id)).fetchone(): continue
+            conn.execute('INSERT INTO quartos (numero,tipo,preco_diaria,status,hotel_id) VALUES (?,?,?,?,?)',(str(numero),tipo,preco,'DISPONIVEL',g.hotel_id)); criados+=1
         conn.commit()
-    except Exception as e:
-        conn.close()
-        return jsonify({'erro': str(e)}), 400
-    conn.close()
-    return jsonify({'mensagem': 'Quarto cadastrado com sucesso!'}), 201
+        if not criados: return jsonify({'erro':'Todos esses números de quarto já existem.'}),409
+        ignorados=quantidade-criados
+        return jsonify({'mensagem':f'{criados} quarto(s) criado(s).'+(f' {ignorados} já existiam e foram mantidos.' if ignorados else ''),'criados':criados,'ignorados':ignorados}),201
+    finally: conn.close()
 
-def gerar_numeros_quartos(quantidade, inicial, por_andar):
-    if por_andar > 0:
-        numeros = []
-        andar, pos = divmod(inicial, 100)
-        for _ in range(quantidade):
-            numeros.append(str(andar * 100 + pos))
-            pos += 1
-            if pos > por_andar:
-                andar += 1
-                pos = 1
-        return numeros
-    return [str(inicial + i) for i in range(quantidade)]
-
-@app.route('/api/quartos/lote', methods=['POST'])
+@app.route('/api/quartos/<int:qid>',methods=['PUT'])
 @token_required
-def criar_quartos_lote(current_user, role):
-    data = request.get_json(silent=True) or {}
+def editar_quarto(current_user,role,qid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
     try:
-        quantidade = int(data.get('quantidade', 0))
-        inicial = int(data.get('numero_inicial', 101))
-        por_andar = int(data.get('por_andar', 0))
-        preco = float(data.get('preco_diaria', 0))
-    except (TypeError, ValueError):
-        return jsonify({'erro': 'Valores numéricos inválidos.'}), 400
+        q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(qid,g.hotel_id)).fetchone()
+        if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
+        numero=str(data.get('numero',q['numero']) or '').strip()[:30]; tipo=str(data.get('tipo',q['tipo']) or '').strip()[:80]
+        try: preco=float(data.get('preco_diaria',q['preco_diaria']))
+        except (TypeError,ValueError): return jsonify({'erro':'Diária inválida.'}),400
+        status=str(data.get('status',q['status']) or 'DISPONIVEL').upper()
+        if status not in ('DISPONIVEL','OCUPADO','RESERVADO','MANUTENCAO'): return jsonify({'erro':'Status de quarto inválido.'}),400
+        if conn.execute('SELECT id FROM quartos WHERE hotel_id=? AND numero=? AND id<>?',(g.hotel_id,numero,qid)).fetchone(): return jsonify({'erro':'Outro quarto já usa esse número.'}),409
+        conn.execute('UPDATE quartos SET numero=?,tipo=?,preco_diaria=?,status=? WHERE id=? AND hotel_id=?',(numero,tipo,preco,status,qid,g.hotel_id))
+        conn.commit(); return jsonify({'mensagem':'Quarto atualizado.'}),200
+    finally: conn.close()
 
-    tipo = str(data.get('tipo') or 'Standard').strip()[:60] or 'Standard'
-
-    if quantidade < 1 or quantidade > 500:
-        return jsonify({'erro': 'A quantidade deve ficar entre 1 e 500.'}), 400
-    if inicial < 1:
-        return jsonify({'erro': 'O primeiro número deve ser maior que zero.'}), 400
-    if por_andar < 0 or por_andar > 99:
-        return jsonify({'erro': 'Quartos por andar deve ficar entre 0 e 99.'}), 400
-    if por_andar > 0 and (inicial % 100 < 1 or inicial % 100 > por_andar):
-        return jsonify({'erro': f'Com {por_andar} quartos por andar, o primeiro número deve terminar entre 01 e {por_andar} (ex.: 101).'}), 400
-    if preco <= 0:
-        return jsonify({'erro': 'A diária base deve ser maior que zero.'}), 400
-
-    numeros = gerar_numeros_quartos(quantidade, inicial, por_andar)
-
-    conn = get_db()
-    cursor = conn.cursor()
-    criados = 0
-    for numero in numeros:
-        try:
-            cursor.execute(
-                'INSERT INTO quartos (numero, tipo, preco_diaria, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
-                (numero, tipo, preco, 'DISPONIVEL', g.hotel_id)
-            )
-            criados += 1
-        except Exception:
-            pass # Ignora falhas se a lógica exigir restrições locais no futuro
-    conn.commit()
-    conn.close()
-
-    ignorados = len(numeros) - criados
-    if criados == 0:
-        return jsonify({'erro': 'Todos esses números de quarto já existem. Nada foi criado.'}), 409
-
-    mensagem = f'{criados} quarto(s) criado(s) ({numeros[0]} até {numeros[-1]}).'
-    if ignorados:
-        mensagem += f' {ignorados} já existiam e foram mantidos.'
-    return jsonify({'mensagem': mensagem, 'criados': criados, 'ignorados': ignorados}), 201
-
-@app.route('/api/quartos/<numero>', methods=['DELETE'])
+@app.route('/api/quartos/<int:qid>',methods=['DELETE'])
 @token_required
-def deletar_quarto(current_user, role, numero):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM quartos WHERE numero = ? AND hotel_id = ?', (numero,g.hotel_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Quarto excluído com sucesso!'}), 200
+def deletar_quarto(current_user,role,qid):
+    conn=get_db()
+    try:
+        q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(qid,g.hotel_id)).fetchone()
+        if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
+        reserva=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_out>? LIMIT 1",(g.hotel_id,q['numero'],datetime.date.today().isoformat())).fetchone()
+        if reserva: return jsonify({'erro':'Não é possível excluir um quarto com reserva ativa ou futura.'}),409
+        conn.execute('DELETE FROM quartos WHERE id=? AND hotel_id=?',(qid,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Quarto excluído.'}),200
+    finally: conn.close()
 
-# ==========================================
-# API - HÓSPEDES
-# ==========================================
-@app.route('/api/hospedes', methods=['GET'])
+@app.route('/api/hospedes',methods=['GET'])
 @token_required
-def listar_hospedes(current_user, role):
-    conn = get_db()
-    hospedes = [dict(row) for row in conn.cursor().execute('SELECT * FROM hospedes WHERE hotel_id=? ORDER BY nome',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(hospedes), 200
+def listar_hospedes(current_user,role):
+    conn=get_db()
+    try: return jsonify([dict(x) for x in conn.execute('SELECT * FROM hospedes WHERE hotel_id=? ORDER BY nome',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
 
-@app.route('/api/hospedes', methods=['POST'])
+@app.route('/api/hospedes',methods=['POST'])
 @token_required
-def criar_hospede(current_user, role):
-    data = request.get_json() or {}
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO hospedes (nome, documento, telefone, email, observacoes, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
-        (data.get('nome'), data.get('documento'), data.get('telefone'), data.get('email'), data.get('observacoes'), g.hotel_id)
-    )
-    conn.commit()
-    hid = cursor.lastrowid
-    conn.close()
-    return jsonify({'mensagem': 'Hóspede cadastrado com sucesso!', 'id': hid}), 201
+def criar_hospede(current_user,role):
+    data=request.get_json(silent=True) or {}; nome=str(data.get('nome') or '').strip()[:180]
+    if not nome: return jsonify({'erro':'Nome do hóspede é obrigatório.'}),400
+    conn=get_db()
+    try:
+        cur=conn.cursor(); cur.execute('INSERT INTO hospedes (nome,documento,telefone,email,observacoes,hotel_id) VALUES (?,?,?,?,?,?)',
+            (nome,str(data.get('documento') or '').strip()[:40] or None,str(data.get('telefone') or '').strip()[:30] or None,str(data.get('email') or '').strip()[:160] or None,str(data.get('observacoes') or '').strip()[:1000] or None,g.hotel_id))
+        hid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Hóspede cadastrado.','id':hid}),201
+    finally: conn.close()
 
-# ==========================================
-# API - FAIXAS ETÁRIAS (CATEGORIAS E TAXAS)
-# ==========================================
-@app.route('/api/faixas_etarias', methods=['GET'])
+@app.route('/api/hospedes/<int:hid>',methods=['PUT'])
 @token_required
-def listar_faixas(current_user, role):
-    conn = get_db()
-    faixas = [dict(row) for row in conn.cursor().execute('SELECT * FROM faixas_etarias WHERE hotel_id=?',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(faixas), 200
+def editar_hospede(current_user,role,hid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        h=conn.execute('SELECT * FROM hospedes WHERE id=? AND hotel_id=?',(hid,g.hotel_id)).fetchone()
+        if not h: return jsonify({'erro':'Hóspede não encontrado.'}),404
+        nome=str(data.get('nome',h['nome']) or '').strip()[:180]
+        if not nome: return jsonify({'erro':'Nome é obrigatório.'}),400
+        conn.execute('UPDATE hospedes SET nome=?,documento=?,telefone=?,email=?,observacoes=? WHERE id=? AND hotel_id=?',
+            (nome,str(data.get('documento',h['documento']) or '').strip()[:40] or None,str(data.get('telefone',h['telefone']) or '').strip()[:30] or None,str(data.get('email',h['email']) or '').strip()[:160] or None,str(data.get('observacoes',h['observacoes']) or '').strip()[:1000] or None,hid,g.hotel_id))
+        conn.commit(); return jsonify({'mensagem':'Hóspede atualizado.'}),200
+    finally: conn.close()
 
-@app.route('/api/faixas_etarias', methods=['POST'])
+@app.route('/api/faixas_etarias',methods=['GET'])
 @token_required
-def criar_faixa(current_user, role):
-    data = request.get_json() or {}
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional, hotel_id) VALUES (?, ?, ?, ?, ?)',
-        (data.get('nome'), int(data.get('idade_min', 0)), int(data.get('idade_max', 120)), float(data.get('valor_adicional', 0.0)), g.hotel_id)
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Faixa/Categoria criada!'}), 201
+def listar_faixas(current_user,role):
+    conn=get_db()
+    try: return jsonify([dict(x) for x in conn.execute('SELECT * FROM faixas_etarias WHERE hotel_id=? ORDER BY idade_min,nome',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
 
-@app.route('/api/faixas_etarias/<int:fid>', methods=['DELETE'])
+@app.route('/api/faixas_etarias',methods=['POST'])
 @token_required
-def deletar_faixa(current_user, role, fid):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM faixas_etarias WHERE id = ? AND hotel_id = ?', (fid,g.hotel_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Faixa removida!'}), 200
+def criar_faixa(current_user,role):
+    data=request.get_json(silent=True) or {}
+    try: minimo=int(data.get('idade_min',0)); maximo=int(data.get('idade_max',120)); adicional=float(data.get('valor_adicional',0))
+    except (TypeError,ValueError): return jsonify({'erro':'Valores da faixa inválidos.'}),400
+    nome=str(data.get('nome') or '').strip()[:100]
+    if not nome or minimo<0 or maximo<minimo or adicional<0: return jsonify({'erro':'Revise os dados da categoria.'}),400
+    conn=get_db()
+    try:
+        conn.execute('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',(nome,minimo,maximo,adicional,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Categoria salva.'}),201
+    finally: conn.close()
 
-# ==========================================
-# API - RESERVAS
-# ==========================================
+@app.route('/api/faixas_etarias/<int:fid>',methods=['PUT'])
+@token_required
+def editar_faixa(current_user,role,fid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        f=conn.execute('SELECT * FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone()
+        if not f: return jsonify({'erro':'Categoria não encontrada.'}),404
+        try: minimo=int(data.get('idade_min',f['idade_min'])); maximo=int(data.get('idade_max',f['idade_max'])); adicional=float(data.get('valor_adicional',f['valor_adicional']))
+        except (TypeError,ValueError): return jsonify({'erro':'Valores inválidos.'}),400
+        nome=str(data.get('nome',f['nome']) or '').strip()[:100]
+        if not nome or minimo<0 or maximo<minimo or adicional<0: return jsonify({'erro':'Revise os dados da categoria.'}),400
+        conn.execute('UPDATE faixas_etarias SET nome=?,idade_min=?,idade_max=?,valor_adicional=? WHERE id=? AND hotel_id=?',(nome,minimo,maximo,adicional,fid,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Categoria atualizada.'}),200
+    finally: conn.close()
+
+@app.route('/api/faixas_etarias/<int:fid>',methods=['DELETE'])
+@token_required
+def deletar_faixa(current_user,role,fid):
+    conn=get_db()
+    try:
+        if not conn.execute('SELECT id FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone(): return jsonify({'erro':'Categoria não encontrada.'}),404
+        conn.execute('DELETE FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Categoria removida.'}),200
+    finally: conn.close()
+
 @app.route('/api/reservas', methods=['GET'])
 @token_required
 def listar_reservas(current_user, role):

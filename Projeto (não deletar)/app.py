@@ -826,8 +826,8 @@ def criar_quartos_lote(current_user, role):
     for numero in numeros:
         try:
             cursor.execute(
-                'INSERT INTO quartos (numero, tipo, preco_diaria, status) VALUES (?, ?, ?, ?)',
-                (numero, tipo, preco, 'DISPONIVEL')
+                'INSERT INTO quartos (numero, tipo, preco_diaria, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
+                (numero, tipo, preco, 'DISPONIVEL', g.hotel_id)
             )
             criados += 1
         except Exception:

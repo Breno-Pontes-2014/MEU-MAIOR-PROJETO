@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Segredos locais do Hotel Master
+**/.jwt_secret
+**/.env

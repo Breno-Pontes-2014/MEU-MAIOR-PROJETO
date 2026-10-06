@@ -1508,6 +1508,10 @@ def editar_usuario_hotel(current_user,role,uid):
         ativo=1 if bool(data.get('ativo',u['ativo'])) else 0
         if perfil not in ROLE_LABELS or perfil=='platform_admin': return jsonify({'erro':'Perfil inválido.'}),400
         if uid==g.current_user_id and not ativo: return jsonify({'erro':'O administrador atual não pode se bloquear por esta tela.'}),409
+        if uid==g.current_user_id and perfil!='admin': return jsonify({'erro':'O administrador principal não pode remover o próprio perfil de administrador.'}),409
+        if u['role']=='admin' and (not ativo or perfil!='admin'):
+            outros=conn.execute("SELECT COUNT(*) AS total FROM usuarios WHERE hotel_id=? AND role='admin' AND ativo=1 AND id<>?",(g.hotel_id,uid)).fetchone()['total']
+            if int(outros)==0: return jsonify({'erro':'O hotel precisa manter pelo menos um administrador ativo.'}),409
         campos=['nome=?','email=?','role=?','ativo=?']; params=[novo_nome,email,perfil,ativo]
         senha=data.get('password')
         if senha not in (None,''):

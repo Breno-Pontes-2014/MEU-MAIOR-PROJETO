@@ -2036,7 +2036,7 @@ REGISTER_TEMPLATE = """
 </head>
 <body class="bg-light">
 <div class="container py-5" style="max-width: 600px;">
-    <h2 class="mb-4 text-center">🏨 Cadastro de Novo Hotel</h2>
+    <h2 class="mb-4 text-center">Cadastro de Novo Hotel</h2>
     
     {% if erro %}
     <div class="alert alert-danger">{{ erro }}</div>
@@ -2136,7 +2136,7 @@ LOGIN_TEMPLATE = """
 </head>
 <body class="bg-light d-flex align-items-center justify-content-center" style="height: 100vh;">
 <div class="card p-4 shadow-sm" style="max-width: 400px; width: 100%;">
-    <h3 class="text-center mb-3">🔑 Login - Hotel Master</h3>
+    <h3 class="text-center mb-3">Hotel Master</h3>
     
     {% if erro %}
     <div class="alert alert-danger">{{ erro }}</div>

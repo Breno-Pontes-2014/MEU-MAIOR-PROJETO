@@ -924,10 +924,10 @@ def atualizar_ordem(current_user, role, oid):
 def relatorios_gerenciais(current_user, role):
     conn = get_db()
     cursor = conn.cursor()
-    total_quartos = cursor.execute('SELECT COUNT(*) as t FROM quartos').fetchone()['t'] or 1
-    quartos_ocupados = cursor.execute("SELECT COUNT(*) as t FROM quartos WHERE status = 'OCUPADO'").fetchone()['t']
-    res_receita = cursor.execute("SELECT SUM(valor_total) as s FROM reservas").fetchone()['s'] or 0.0
-    total_reservas = cursor.execute("SELECT SUM(diarias) as s FROM reservas").fetchone()['s'] or 1
+    total_quartos = cursor.execute('SELECT COUNT(*) as t FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['t'] or 1
+    quartos_ocupados = cursor.execute("SELECT COUNT(*) as t FROM quartos WHERE status = 'OCUPADO' AND hotel_id=?",(g.hotel_id,)).fetchone()['t']
+    res_receita = cursor.execute("SELECT SUM(valor_total) as s FROM reservas WHERE hotel_id=?",(g.hotel_id,)).fetchone()['s'] or 0.0
+    total_reservas = cursor.execute("SELECT SUM(diarias) as s FROM reservas WHERE hotel_id=?",(g.hotel_id,)).fetchone()['s'] or 1
 
     taxa_ocupacao = round((quartos_ocupados / total_quartos) * 100, 2)
     adr = round(res_receita / total_reservas, 2) if total_reservas > 0 else 0.0

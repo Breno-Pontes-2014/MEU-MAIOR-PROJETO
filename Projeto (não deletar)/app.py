@@ -11,6 +11,7 @@ import jwt
 from functools import wraps
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session, g
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 try:
     import psycopg
@@ -29,6 +30,7 @@ app = Flask(
     __name__,
     template_folder=TEMPLATES_DIR
 )
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 def get_or_create_secret(env_name, file_path=None):
     value = os.getenv(env_name, '').strip()
@@ -176,8 +178,66 @@ def validate_password(password):
         return 'A senha deve conter pelo menos um número.'
     return None
 
+ROLE_LABELS = {
+    'platform_admin': 'Administrador do SaaS',
+    'admin': 'Administrador do Hotel',
+    'gerente': 'Gerente',
+    'recepcao': 'Recepção',
+    'limpeza': 'Limpeza',
+    'manutencao': 'Manutenção',
+    'financeiro': 'Financeiro'
+}
+
+ROLE_PERMISSIONS = {
+    'admin': {'*'},
+    'gerente': {'rooms.view','rooms.manage','guests.view','guests.manage','categories.view','categories.manage','reservations.view','reservations.manage','reservations.pay','stock.view','stock.manage','finance.view','finance.manage','orders.view','orders.manage','services.view','services.manage','requests.view','requests.manage','reports.view','whatsapp.use'},
+    'recepcao': {'rooms.view','guests.view','guests.manage','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use'},
+    'limpeza': {'rooms.view','orders.view','orders.manage','requests.view','requests.manage'},
+    'manutencao': {'rooms.view','orders.view','orders.manage','requests.view'},
+    'financeiro': {'rooms.view','guests.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view'}
+}
+
+ENDPOINT_PERMISSIONS = {
+    'listar_quartos':'rooms.view','criar_quarto':'rooms.manage','criar_quartos_lote':'rooms.manage','editar_quarto':'rooms.manage','deletar_quarto':'rooms.manage',
+    'listar_hospedes':'guests.view','criar_hospede':'guests.manage','editar_hospede':'guests.manage',
+    'listar_faixas':'categories.view','criar_faixa':'categories.manage','editar_faixa':'categories.manage','deletar_faixa':'categories.manage',
+    'listar_reservas':'reservations.view','criar_reserva':'reservations.manage','editar_reserva':'reservations.manage','cancelar_reserva':'reservations.manage','marcar_pagamento_reserva':'reservations.pay',
+    'gerenciar_estoque':'stock.manage','editar_estoque':'stock.manage','deletar_estoque':'stock.manage',
+    'gerenciar_financeiro':'finance.manage','editar_financeiro':'finance.manage',
+    'gerenciar_ordens':'orders.manage','atualizar_ordem':'orders.manage','editar_ordem':'orders.manage','deletar_ordem':'orders.manage',
+    'relatorios_gerenciais':'reports.view',
+    'api_integracoes':'integrations.view','salvar_integracoes':'integrations.manage','pesquisar_maps':'integrations.manage',
+    'criar_checkout_asaas':'subscription.manage','api_assinatura':'subscription.view','api_assinatura_limites':'subscription.view','api_solicitar_plano':'subscription.manage',
+    'listar_usuarios_hotel':'team.view','criar_usuario_hotel':'team.manage','editar_usuario_hotel':'team.manage','desativar_usuario_hotel':'team.manage',
+    'listar_servicos':'services.view','criar_servico':'services.manage','editar_servico':'services.manage','deletar_servico':'services.manage',
+    'listar_pedidos':'requests.view','criar_pedido':'requests.manage','atualizar_pedido_status':'requests.manage','marcar_pagamento_pedido':'requests.manage'
+}
+
+def can(role, permission):
+    if role == 'platform_admin':
+        return True
+    perms = ROLE_PERMISSIONS.get(role, set())
+    return '*' in perms or permission in perms
+
+def senha_compat(password_hash, password):
+    if isinstance(password_hash, str) and password_hash.startswith('SAASPBKDF2$'):
+        import base64, hmac
+        try:
+            _, iterations, salt_b64, digest_b64 = password_hash.split('$', 3)
+            salt = base64.urlsafe_b64decode(salt_b64.encode('ascii'))
+            esperado = base64.urlsafe_b64decode(digest_b64.encode('ascii'))
+            derivado = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, int(iterations))
+            return hmac.compare_digest(derivado, esperado)
+        except Exception:
+            return False
+    try:
+        return check_password_hash(password_hash, password)
+    except Exception:
+        return False
+
 def client_ip():
-    return request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown').split(',')[0].strip()
+    return (request.remote_addr or 'unknown').strip()
+
 
 def login_is_locked(key):
     info = LOGIN_FAILURES.get(key)

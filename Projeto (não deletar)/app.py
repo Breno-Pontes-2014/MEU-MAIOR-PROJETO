@@ -513,6 +513,11 @@ def registro():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
         hotel_nome = request.form.get('hotel_nome', '').strip()
+        if not check_csrf():
+            return render_template_string(REGISTER_TEMPLATE, erro='Sessão expirada. Recarregue a página.', csrf_token=csrf_token())
+        senha_erro = validate_password(password)
+        if senha_erro:
+            return render_template_string(REGISTER_TEMPLATE, erro=senha_erro, csrf_token=csrf_token())
 
         if not username or not password or not hotel_nome:
             return render_template_string(REGISTER_TEMPLATE, erro='Preencha todos os campos obrigatórios!')

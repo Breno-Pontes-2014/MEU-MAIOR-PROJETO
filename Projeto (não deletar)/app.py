@@ -422,8 +422,20 @@ def headers_seguros(response):
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
-    if request.path.startswith('/api/') or request.path in ('/login','/registro'):
-        response.headers['Cache-Control'] = 'no-store'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
+        "connect-src 'self'; "
+        "frame-src https://www.google.com https://www.google.com/maps/; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
+    )
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Pragma'] = 'no-cache'
+    if request.is_secure or request.headers.get('X-Forwarded-Proto','').lower()=='https':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
 
 def ensure_servicos_padrao(cursor, hotel_id):
@@ -901,15 +913,18 @@ def registro():
             conn.close()
             return render_template_string(LOGIN_TEMPLATE, sucesso="Hotel e Usuário cadastrados com sucesso! Faça seu login.",csrf_token=csrf_token())
 
-        except Exception as e:
+        except Exception:
+            app.logger.exception('Falha no cadastro de hotel')
             conn.rollback()
             conn.close()
-            return render_template_string(REGISTER_TEMPLATE, erro=f'Erro interno no cadastro: {str(e)}')
+            return render_template_string(REGISTER_TEMPLATE, erro='Não foi possível concluir o cadastro. Verifique os dados e tente novamente.',csrf_token=csrf_token())
 
     return render_template_string(REGISTER_TEMPLATE,csrf_token=csrf_token())
 
-@app.route('/logout')
+@app.route('/logout',methods=['GET','POST'])
 def logout():
+    if request.method=='POST' and not check_csrf():
+        return 'Token CSRF ausente ou inválido.',403
     session.clear()
     return redirect(url_for('login'))
 

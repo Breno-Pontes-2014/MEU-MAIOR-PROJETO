@@ -1,6 +1,7 @@
 import os
 import datetime
 import json
+import hashlib
 import secrets
 import time
 import sqlite3
@@ -269,6 +270,32 @@ def ensure_subscription_for_hotel(cursor, hotel_id):
         VALUES (?, ?, 'TESTE', ?, ?, ?, 'interno', ?)
     ''', (hotel_id, plano['id'], hoje.isoformat(), trial_ate.isoformat(), trial_ate.isoformat(), datetime.datetime.utcnow().isoformat()))
 
+def get_hotel_integracoes(conn, hotel_id):
+    row = conn.execute('SELECT * FROM hotel_integracoes WHERE hotel_id=? LIMIT 1',(hotel_id,)).fetchone()
+    return dict(row) if row else None
+
+def normalizar_url(valor):
+    valor = str(valor or '').strip()
+    if not valor:
+        return None
+    if len(valor) > 1000:
+        raise ValueError('URL muito longa.')
+    parsed = urllib.parse.urlparse(valor)
+    if parsed.scheme not in ('https','http') or not parsed.netloc:
+        raise ValueError('Informe uma URL válida começando por https://')
+    return valor
+
+def maps_embed_url(integracao):
+    key = os.getenv('GOOGLE_MAPS_API_KEY','').strip()
+    if not key:
+        return None
+    place_id = (integracao.get('maps_place_id') or '').strip()
+    endereco = (integracao.get('endereco') or '').strip()
+    query = f'place_id:{place_id}' if place_id else endereco
+    if not query:
+        return None
+    return 'https://www.google.com/maps/embed/v1/place?' + urllib.parse.urlencode({'key':key,'q':query})
+
 def get_subscription(conn, hotel_id):
     row = conn.execute('''
         SELECT s.*, p.nome AS plano_nome, p.preco_mensal, p.limite_quartos, p.limite_usuarios, p.dias_ciclo
@@ -487,6 +514,46 @@ def init_db():
         hashed_pw = generate_password_hash('admin123', method='pbkdf2:sha256')
         cursor.execute('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)',
                        ('admin', hashed_pw, 'admin'))
+
+    # Configurações de integrações por hotel.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS hotel_integracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hotel_id INTEGER NOT NULL UNIQUE,
+            booking_url TEXT,
+            airbnb_url TEXT,
+            expedia_url TEXT,
+            hoteis_url TEXT,
+            website_url TEXT,
+            maps_place_id TEXT,
+            maps_url TEXT,
+            maps_nome TEXT,
+            endereco TEXT,
+            latitude REAL,
+            longitude REAL,
+            atualizado_em TEXT NOT NULL,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+        )
+    ''')
+
+    # Registro idempotente de Webhooks recebidos.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS webhook_eventos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            event_id TEXT NOT NULL UNIQUE,
+            event_type TEXT,
+            hotel_id INTEGER,
+            payload TEXT NOT NULL,
+            recebido_em TEXT NOT NULL,
+            processado_em TEXT,
+            status TEXT NOT NULL DEFAULT 'RECEBIDO',
+            erro TEXT,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_webhook_hotel_id ON webhook_eventos(hotel_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_webhook_event_id ON webhook_eventos(event_id)')
 
     # Migração multi-hotel de dados já existentes.
     add_column_if_missing(cursor,'usuarios','hotel_id INTEGER')
@@ -1030,6 +1097,171 @@ def relatorios_gerenciais(current_user, role):
         'adr': adr,
         'revpar': revpar
     }), 200
+
+# ==========================================
+# API - INTEGRAÇÕES POR HOTEL
+# ==========================================
+@app.route('/api/integracoes', methods=['GET'])
+@token_required
+def api_integracoes(current_user, role):
+    conn=get_db()
+    try:
+        integracao=get_hotel_integracoes(conn,g.hotel_id) or {'hotel_id':g.hotel_id}
+        integracao['maps_embed_url']=maps_embed_url(integracao)
+        integracao['webhook_asaas_url']=request.url_root.rstrip('/')+'/webhooks/asaas'
+        return jsonify(integracao),200
+    finally:
+        conn.close()
+
+@app.route('/api/integracoes', methods=['PUT'])
+@token_required
+def salvar_integracoes(current_user, role):
+    if not require_admin_role():
+        return jsonify({'erro':'Apenas o administrador pode alterar as integrações do hotel.'}),403
+    data=request.get_json(silent=True) or {}
+    try:
+        urls={campo:normalizar_url(data.get(campo)) for campo in ('booking_url','airbnb_url','expedia_url','hoteis_url','website_url','maps_url')}
+    except ValueError as e:
+        return jsonify({'erro':str(e)}),400
+    try:
+        latitude=float(data['latitude']) if data.get('latitude') not in (None,'') else None
+        longitude=float(data['longitude']) if data.get('longitude') not in (None,'') else None
+    except (TypeError,ValueError):
+        return jsonify({'erro':'Latitude/longitude inválidas.'}),400
+    if latitude is not None and not -90 <= latitude <= 90: return jsonify({'erro':'Latitude inválida.'}),400
+    if longitude is not None and not -180 <= longitude <= 180: return jsonify({'erro':'Longitude inválida.'}),400
+    conn=get_db()
+    try:
+        now=datetime.datetime.utcnow().isoformat()
+        values=(g.hotel_id,urls['booking_url'],urls['airbnb_url'],urls['expedia_url'],urls['hoteis_url'],urls['website_url'],
+                str(data.get('maps_place_id') or '').strip()[:300] or None,urls['maps_url'],
+                str(data.get('maps_nome') or '').strip()[:200] or None,str(data.get('endereco') or '').strip()[:500] or None,
+                latitude,longitude,now)
+        existing=conn.execute('SELECT id FROM hotel_integracoes WHERE hotel_id=?',(g.hotel_id,)).fetchone()
+        if existing:
+            conn.execute('''UPDATE hotel_integracoes SET booking_url=?,airbnb_url=?,expedia_url=?,hoteis_url=?,website_url=?,maps_place_id=?,maps_url=?,maps_nome=?,endereco=?,latitude=?,longitude=?,atualizado_em=? WHERE hotel_id=?''',
+                         values[1:]+(g.hotel_id,))
+        else:
+            conn.execute('''INSERT INTO hotel_integracoes (hotel_id,booking_url,airbnb_url,expedia_url,hoteis_url,website_url,maps_place_id,maps_url,maps_nome,endereco,latitude,longitude,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',values)
+        conn.commit()
+        return jsonify({'mensagem':'Integrações salvas com sucesso.','integracao':get_hotel_integracoes(conn,g.hotel_id)}),200
+    finally:
+        conn.close()
+
+@app.route('/api/integracoes/maps/pesquisar', methods=['POST'])
+@token_required
+def pesquisar_maps(current_user, role):
+    api_key=os.getenv('GOOGLE_MAPS_API_KEY','').strip()
+    if not api_key:
+        return jsonify({'erro':'Configure GOOGLE_MAPS_API_KEY no ambiente do servidor.'}),503
+    data=request.get_json(silent=True) or {}
+    consulta=str(data.get('q') or '').strip()
+    if len(consulta)<3 or len(consulta)>300:
+        return jsonify({'erro':'Informe o nome ou endereço do hotel (3 a 300 caracteres).'}),400
+    payload=json.dumps({'textQuery':consulta,'pageSize':5}).encode('utf-8')
+    req=urllib.request.Request('https://places.googleapis.com/v1/places:searchText',data=payload,method='POST',
+        headers={'Content-Type':'application/json','X-Goog-Api-Key':api_key,
+                 'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.googleMapsUri'})
+    try:
+        with urllib.request.urlopen(req,timeout=10) as response:
+            raw=json.loads(response.read().decode('utf-8'))
+    except Exception:
+        return jsonify({'erro':'Não foi possível consultar o Google Maps agora.'}),502
+    resultados=[]
+    for p in raw.get('places',[]):
+        loc=p.get('location') or {}
+        resultados.append({'id':p.get('id'),'nome':(p.get('displayName') or {}).get('text'),
+                           'endereco':p.get('formattedAddress'),'latitude':loc.get('latitude'),
+                           'longitude':loc.get('longitude'),'maps_url':p.get('googleMapsUri')})
+    return jsonify({'resultados':resultados}),200
+
+# ==========================================
+# WEBHOOK - ASAAS
+# ==========================================
+@app.route('/webhooks/asaas', methods=['POST'])
+def webhook_asaas():
+    esperado=os.getenv('ASAAS_WEBHOOK_TOKEN','').strip()
+    fornecido=request.headers.get('asaas-access-token','').strip()
+    if not esperado or not fornecido or not secrets.compare_digest(esperado,fornecido):
+        return jsonify({'erro':'Não autorizado.'}),401
+    data=request.get_json(silent=True)
+    if not isinstance(data,dict):
+        return jsonify({'erro':'JSON inválido.'}),400
+
+    event_id=str(data.get('id') or '').strip()
+    if not event_id:
+        event_id=hashlib.sha256(request.get_data(cache=False)).hexdigest()
+    event_type=str(data.get('event') or data.get('event_type') or '').upper()[:120]
+    payload=json.dumps(data,ensure_ascii=False,separators=(',',':'))
+    now=datetime.datetime.utcnow().isoformat()
+
+    conn=get_db()
+    try:
+        existente=conn.execute('SELECT id,status FROM webhook_eventos WHERE provider=? AND event_id=?',('asaas',event_id)).fetchone()
+        if existente:
+            return jsonify({'ok':True,'duplicado':True}),200
+
+        hotel_id=None
+        payment=data.get('payment') if isinstance(data.get('payment'),dict) else {}
+        subscription=data.get('subscription') if isinstance(data.get('subscription'),dict) else {}
+        external_subscription=payment.get('subscription') or subscription.get('id')
+        external_reference=payment.get('externalReference') or data.get('externalReference')
+
+        assinatura=None
+        if external_subscription:
+            assinatura=conn.execute('SELECT * FROM assinaturas WHERE assinatura_externa=? ORDER BY id DESC LIMIT 1',(str(external_subscription),)).fetchone()
+        if not assinatura and external_reference:
+            text_ref=str(external_reference)
+            if text_ref.startswith('hotel:'):
+                try: hotel_id=int(text_ref.split(':')[1])
+                except (TypeError,ValueError): hotel_id=None
+            if hotel_id:
+                assinatura=conn.execute('SELECT * FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(hotel_id,)).fetchone()
+
+        if assinatura:
+            hotel_id=assinatura['hotel_id']
+
+        conn.execute('INSERT INTO webhook_eventos (provider,event_id,event_type,hotel_id,payload,recebido_em,status) VALUES (?,?,?,?,?,?,?)',
+                     ('asaas',event_id,event_type,hotel_id,payload,now,'RECEBIDO'))
+
+        if assinatura:
+            if external_subscription:
+                conn.execute('UPDATE assinaturas SET assinatura_externa=?,atualizado_em=? WHERE id=?',(str(external_subscription),now,assinatura['id']))
+
+            ativadores={'PAYMENT_CONFIRMED','PAYMENT_RECEIVED','PAYMENT_APPROVED','CHECKOUT_PAID'}
+            suspensores={'PAYMENT_OVERDUE','PAYMENT_DELETED','PAYMENT_REFUNDED'}
+            canceladores={'SUBSCRIPTION_INACTIVATED','SUBSCRIPTION_DELETED','SUBSCRIPTION_CANCELED'}
+            if event_type in ativadores:
+                plano=conn.execute('SELECT dias_ciclo FROM planos WHERE id=?',(assinatura['plano_id'],)).fetchone()
+                dias=int(plano['dias_ciclo'] if plano else 30)
+                fim=datetime.date.today()+datetime.timedelta(days=dias)
+                conn.execute('UPDATE assinaturas SET status=?,inicio=?,periodo_fim=?,trial_ate=NULL,atualizado_em=? WHERE id=?',
+                             ('ATIVA',datetime.date.today().isoformat(),fim.isoformat(),now,assinatura['id']))
+                status_evento='PROCESSADO'
+            elif event_type in suspensores:
+                conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE id=?',('SUSPENSA',now,assinatura['id']))
+                status_evento='PROCESSADO'
+            elif event_type in canceladores:
+                conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE id=?',('CANCELADA',now,assinatura['id']))
+                status_evento='PROCESSADO'
+            elif event_type=='SUBSCRIPTION_CREATED':
+                status_evento='PROCESSADO'
+            else:
+                status_evento='RECEBIDO'
+        else:
+            status_evento='SEM_VINCULO'
+
+        conn.execute('UPDATE webhook_eventos SET status=?,processado_em=? WHERE provider=? AND event_id=?',(status_evento,now,'asaas',event_id))
+        conn.commit()
+        return jsonify({'ok':True,'status':status_evento,'event_id':event_id}),200
+    except Exception as e:
+        conn.rollback()
+        try:
+            conn.execute('UPDATE webhook_eventos SET status=?,erro=? WHERE provider=? AND event_id=?',('ERRO',str(e)[:500],'asaas',event_id)); conn.commit()
+        except Exception: pass
+        return jsonify({'erro':'Evento recebido, mas houve falha no processamento.'}),500
+    finally:
+        conn.close()
 
 # ==========================================
 # API - SAAS / CONTA / PLANOS

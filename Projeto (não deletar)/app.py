@@ -593,7 +593,7 @@ def dashboard():
 @token_required
 def listar_quartos(current_user, role):
     conn = get_db()
-    quartos = [dict(row) for row in conn.cursor().execute('SELECT * FROM quartos ORDER BY CAST(numero AS INTEGER), numero').fetchall()]
+    quartos = [dict(row) for row in conn.cursor().execute('SELECT * FROM quartos WHERE hotel_id=? ORDER BY CAST(numero AS INTEGER), numero',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(quartos), 200
 
@@ -609,8 +609,8 @@ def criar_quarto(current_user, role):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            'INSERT INTO quartos (numero, tipo, preco_diaria, status) VALUES (?, ?, ?, ?)',
-            (numero, tipo, preco_diaria, 'DISPONIVEL')
+            'INSERT INTO quartos (numero, tipo, preco_diaria, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
+            (numero, tipo, preco_diaria, 'DISPONIVEL', g.hotel_id)
         )
         conn.commit()
     except Exception as e:
@@ -688,7 +688,7 @@ def criar_quartos_lote(current_user, role):
 def deletar_quarto(current_user, role, numero):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM quartos WHERE numero = ?', (numero,))
+    cursor.execute('DELETE FROM quartos WHERE numero = ? AND hotel_id = ?', (numero,g.hotel_id))
     conn.commit()
     conn.close()
     return jsonify({'mensagem': 'Quarto excluído com sucesso!'}), 200
@@ -700,7 +700,7 @@ def deletar_quarto(current_user, role, numero):
 @token_required
 def listar_hospedes(current_user, role):
     conn = get_db()
-    hospedes = [dict(row) for row in conn.cursor().execute('SELECT * FROM hospedes ORDER BY nome').fetchall()]
+    hospedes = [dict(row) for row in conn.cursor().execute('SELECT * FROM hospedes WHERE hotel_id=? ORDER BY nome',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(hospedes), 200
 
@@ -711,8 +711,8 @@ def criar_hospede(current_user, role):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        'INSERT INTO hospedes (nome, documento, telefone, email, observacoes) VALUES (?, ?, ?, ?, ?)',
-        (data.get('nome'), data.get('documento'), data.get('telefone'), data.get('email'), data.get('observacoes'))
+        'INSERT INTO hospedes (nome, documento, telefone, email, observacoes, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
+        (data.get('nome'), data.get('documento'), data.get('telefone'), data.get('email'), data.get('observacoes'), g.hotel_id)
     )
     conn.commit()
     hid = cursor.lastrowid
@@ -726,7 +726,7 @@ def criar_hospede(current_user, role):
 @token_required
 def listar_faixas(current_user, role):
     conn = get_db()
-    faixas = [dict(row) for row in conn.cursor().execute('SELECT * FROM faixas_etarias').fetchall()]
+    faixas = [dict(row) for row in conn.cursor().execute('SELECT * FROM faixas_etarias WHERE hotel_id=?',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(faixas), 200
 
@@ -737,8 +737,8 @@ def criar_faixa(current_user, role):
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        'INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional) VALUES (?, ?, ?, ?)',
-        (data.get('nome'), int(data.get('idade_min', 0)), int(data.get('idade_max', 120)), float(data.get('valor_adicional', 0.0)))
+        'INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional, hotel_id) VALUES (?, ?, ?, ?, ?)',
+        (data.get('nome'), int(data.get('idade_min', 0)), int(data.get('idade_max', 120)), float(data.get('valor_adicional', 0.0)), g.hotel_id)
     )
     conn.commit()
     conn.close()
@@ -749,7 +749,7 @@ def criar_faixa(current_user, role):
 def deletar_faixa(current_user, role, fid):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM faixas_etarias WHERE id = ?', (fid,))
+    cursor.execute('DELETE FROM faixas_etarias WHERE id = ? AND hotel_id = ?', (fid,g.hotel_id))
     conn.commit()
     conn.close()
     return jsonify({'mensagem': 'Faixa removida!'}), 200
@@ -765,9 +765,10 @@ def listar_reservas(current_user, role):
         SELECT r.*, h.nome as hospede_nome 
         FROM reservas r 
         LEFT JOIN hospedes h ON r.hospede_id = h.id 
+        WHERE r.hotel_id = ?
         ORDER BY r.id DESC
     '''
-    reservas = [dict(row) for row in conn.cursor().execute(query).fetchall()]
+    reservas = [dict(row) for row in conn.cursor().execute(query,(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(reservas), 200
 
@@ -785,7 +786,7 @@ def criar_reserva(current_user, role):
     conn = get_db()
     cursor = conn.cursor()
     
-    q_data = cursor.execute('SELECT preco_diaria FROM quartos WHERE numero = ?', (quarto_numero,)).fetchone()
+    q_data = cursor.execute('SELECT preco_diaria FROM quartos WHERE numero = ? AND hotel_id = ?', (quarto_numero,g.hotel_id)).fetchone()
     if not q_data:
         conn.close()
         return jsonify({'erro': 'Quarto não encontrado.'}), 404
@@ -794,7 +795,10 @@ def criar_reserva(current_user, role):
     valor_diaria_total = preco_base_quarto
     detalhes_str = []
     
-    faixas = {f['id']: f for f in cursor.execute('SELECT * FROM faixas_etarias').fetchall()}
+    hospede_ok=cursor.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone()
+    if not hospede_ok:
+        conn.close(); return jsonify({'erro':'Hóspede não pertence ao hotel atual.'}),403
+    faixas={f['id']:f for f in cursor.execute('SELECT * FROM faixas_etarias WHERE hotel_id=?',(g.hotel_id,)).fetchall()}
 
     for item in composicao:
         fid = int(item.get('faixa_id', 0))
@@ -817,15 +821,15 @@ def criar_reserva(current_user, role):
     detalhes_resumo = ", ".join(detalhes_str)
 
     cursor.execute(
-        '''INSERT INTO reservas (hospede_id, quarto_numero, check_in, check_out, detalhes_pessoas, diarias, status, valor_total, status_pagamento) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (hospede_id, quarto_numero, check_in, check_out, detalhes_resumo, diarias, 'CONFIRMADA', valor_total, 'PENDENTE')
+        '''INSERT INTO reservas (hospede_id, quarto_numero, check_in, check_out, detalhes_pessoas, diarias, status, valor_total, status_pagamento, hotel_id) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+        (hospede_id, quarto_numero, check_in, check_out, detalhes_resumo, diarias, 'CONFIRMADA', valor_total, 'PENDENTE', g.hotel_id)
     )
     
-    cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data) VALUES (?, ?, ?, ?, ?)',
-                   ('ENTRADA', f"Reserva Quarto {quarto_numero} ({diarias} diárias)", valor_total, 'Hospedagem', datetime.date.today().isoformat()))
+    cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
+                   ('ENTRADA', f"Reserva Quarto {quarto_numero} ({diarias} diárias)", valor_total, 'Hospedagem', datetime.date.today().isoformat(),g.hotel_id))
 
-    cursor.execute('UPDATE quartos SET status = ? WHERE numero = ?', ('OCUPADO', quarto_numero))
+    cursor.execute('UPDATE quartos SET status = ? WHERE numero = ? AND hotel_id=?', ('OCUPADO', quarto_numero,g.hotel_id))
     conn.commit()
     conn.close()
     return jsonify({'mensagem': 'Reserva efetuada com sucesso!', 'valor_total': valor_total}), 201

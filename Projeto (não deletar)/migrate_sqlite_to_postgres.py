@@ -146,6 +146,8 @@ def migrate():
             dst.commit()
             print(f"Migrado: {table} ({len(rows)} registros)")
 
+        # Garante faixas padrão e assinatura de teste para todos os hotéis migrados.
+        init_db()
         reset_sequences(dst)
         print("Migração SQLite -> PostgreSQL concluída.")
 

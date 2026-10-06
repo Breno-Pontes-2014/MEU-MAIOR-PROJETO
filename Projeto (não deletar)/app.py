@@ -1118,86 +1118,100 @@ def deletar_faixa(current_user,role,fid):
         conn.execute('DELETE FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Categoria removida.'}),200
     finally: conn.close()
 
-@app.route('/api/reservas', methods=['GET'])
+@app.route('/api/reservas',methods=['GET'])
 @token_required
-def listar_reservas(current_user, role):
-    conn = get_db()
-    query = '''
-        SELECT r.*, h.nome as hospede_nome 
-        FROM reservas r 
-        LEFT JOIN hospedes h ON r.hospede_id = h.id 
-        WHERE r.hotel_id = ?
-        ORDER BY r.id DESC
-    '''
-    reservas = [dict(row) for row in conn.cursor().execute(query,(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(reservas), 200
+def listar_reservas(current_user,role):
+    conn=get_db()
+    try:
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        rows=conn.execute('SELECT r.*,h.nome AS hospede_nome,q.id AS quarto_id FROM reservas r LEFT JOIN hospedes h ON h.id=r.hospede_id AND h.hotel_id=r.hotel_id LEFT JOIN quartos q ON q.numero=r.quarto_numero AND q.hotel_id=r.hotel_id WHERE r.hotel_id=? ORDER BY r.id DESC',(g.hotel_id,)).fetchall()
+        return jsonify([dict(x) for x in rows]),200
+    finally: conn.close()
 
-@app.route('/api/reservas', methods=['POST'])
+@app.route('/api/reservas',methods=['POST'])
 @token_required
-def criar_reserva(current_user, role):
-    data = request.get_json() or {}
-    hospede_id = data.get('hospede_id')
-    quarto_numero = data.get('quarto_numero')
-    check_in = data.get('check_in')
-    check_out = data.get('check_out')
-    diarias = int(data.get('diarias', 1))
-    composicao = data.get('composicao', [])
+def criar_reserva(current_user,role):
+    data=request.get_json(silent=True) or {}
+    try:
+        hospede_id=int(data.get('hospede_id')); quarto_numero=str(data.get('quarto_numero') or '').strip(); check_in=str(data.get('check_in') or ''); check_out=str(data.get('check_out') or '')
+        data_in=datetime.date.fromisoformat(check_in); data_out=datetime.date.fromisoformat(check_out)
+    except (TypeError,ValueError): return jsonify({'erro':'Informe hóspede, quarto e datas válidas.'}),400
+    if data_out<=data_in: return jsonify({'erro':'O check-out deve ser posterior ao check-in.'}),400
+    diarias=(data_out-data_in).days
+    conn=get_db()
+    try:
+        if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede não pertence ao hotel.'}),403
+        q=conn.execute('SELECT * FROM quartos WHERE numero=? AND hotel_id=?',(quarto_numero,g.hotel_id)).fetchone()
+        if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
+        if reserva_conflito(conn,g.hotel_id,quarto_numero,check_in,check_out): return jsonify({'erro':'Já existe uma reserva para este quarto no período informado.'}),409
+        extra,det=composicao_reserva(conn,g.hotel_id,data.get('composicao',[]))
+        total=round((float(q['preco_diaria'])+extra)*diarias,2)
+        cur=conn.cursor()
+        cur.execute('INSERT INTO reservas (hospede_id,quarto_numero,check_in,check_out,detalhes_pessoas,diarias,status,valor_total,status_pagamento,hotel_id,criada_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                    (hospede_id,quarto_numero,check_in,check_out,det,diarias,'CONFIRMADA',total,'PENDENTE',g.hotel_id,g.current_user_id))
+        rid=cur.lastrowid; sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        return jsonify({'mensagem':'Reserva criada. O pagamento permanece pendente.','valor_total':total,'id':rid}),201
+    finally: conn.close()
 
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    q_data = cursor.execute('SELECT preco_diaria FROM quartos WHERE numero = ? AND hotel_id = ?', (quarto_numero,g.hotel_id)).fetchone()
-    if not q_data:
-        conn.close()
-        return jsonify({'erro': 'Quarto não encontrado.'}), 404
-    
-    preco_base_quarto = q_data['preco_diaria']
-    valor_diaria_total = preco_base_quarto
-    detalhes_str = []
-    
-    hospede_ok=cursor.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone()
-    if not hospede_ok:
-        conn.close(); return jsonify({'erro':'Hóspede não pertence ao hotel atual.'}),403
-    faixas={f['id']:f for f in cursor.execute('SELECT * FROM faixas_etarias WHERE hotel_id=?',(g.hotel_id,)).fetchall()}
+@app.route('/api/reservas/<int:rid>',methods=['PUT'])
+@token_required
+def editar_reserva(current_user,role,rid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        r=conn.execute('SELECT * FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()
+        if not r: return jsonify({'erro':'Reserva não encontrada.'}),404
+        if r['status']=='CANCELADA': return jsonify({'erro':'Reserva cancelada não pode ser editada.'}),409
+        try: hospede_id=int(data.get('hospede_id',r['hospede_id'])); quarto_numero=str(data.get('quarto_numero',r['quarto_numero']) or '').strip(); check_in=str(data.get('check_in',r['check_in'])); check_out=str(data.get('check_out',r['check_out']))
+        except (TypeError,ValueError): return jsonify({'erro':'Dados inválidos.'}),400
+        try: diarias=(datetime.date.fromisoformat(check_out)-datetime.date.fromisoformat(check_in)).days
+        except ValueError: return jsonify({'erro':'Datas inválidas.'}),400
+        if diarias<1: return jsonify({'erro':'O check-out deve ser posterior ao check-in.'}),400
+        if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede inválido.'}),403
+        q=conn.execute('SELECT * FROM quartos WHERE numero=? AND hotel_id=?',(quarto_numero,g.hotel_id)).fetchone()
+        if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
+        if reserva_conflito(conn,g.hotel_id,quarto_numero,check_in,check_out,rid): return jsonify({'erro':'Existe outra reserva conflitante para este quarto.'}),409
+        extra,det=composicao_reserva(conn,g.hotel_id,data.get('composicao',[]))
+        total=round((float(q['preco_diaria'])+extra)*diarias,2)
+        conn.execute('UPDATE reservas SET hospede_id=?,quarto_numero=?,check_in=?,check_out=?,detalhes_pessoas=?,diarias=?,valor_total=? WHERE id=? AND hotel_id=?',(hospede_id,quarto_numero,check_in,check_out,det,diarias,total,rid,g.hotel_id))
+        if r['financeiro_id']:
+            conn.execute("UPDATE fluxo_caixa SET valor=?,descricao=? WHERE id=? AND hotel_id=? AND origem_tipo='RESERVA' AND origem_id=?",(total,f"Reserva do quarto {quarto_numero} - {check_in} a {check_out}",r['financeiro_id'],g.hotel_id,rid))
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        return jsonify({'mensagem':'Reserva atualizada.','valor_total':total}),200
+    finally: conn.close()
 
-    for item in composicao:
-        fid = int(item.get('faixa_id', 0))
-        qtd = int(item.get('quantidade', 0))
-        if qtd > 0 and fid in faixas:
-            f = faixas[fid]
-            try:
-                adicional = float(f.get('valor_adicional', 0.0))
-            except:
-                adicional = 0.0
-            
-            subtotal_fx = adicional * qtd
-            valor_diaria_total += subtotal_fx
-            detalhes_str.append(f"{qtd}x {f['nome']}")
+@app.route('/api/reservas/<int:rid>/pagamento',methods=['PUT'])
+@token_required
+def marcar_pagamento_reserva(current_user,role,rid):
+    data=request.get_json(silent=True) or {}; status=str(data.get('status','PENDENTE')).upper(); forma=str(data.get('forma_pagamento','NÃO INFORMADO')).strip()[:40]
+    conn=get_db()
+    try:
+        r=conn.execute('SELECT * FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()
+        if not r: return jsonify({'erro':'Reserva não encontrada.'}),404
+        if r['status']=='CANCELADA': return jsonify({'erro':'Reserva cancelada não pode ser paga.'}),409
+        if status=='PAGO':
+            registrar_entrada_reserva(conn,rid,forma)
+        elif status in ('PENDENTE','NAO_PAGO'):
+            if r['financeiro_id']:
+                conn.execute("DELETE FROM fluxo_caixa WHERE id=? AND hotel_id=? AND origem_tipo='RESERVA' AND origem_id=?",(r['financeiro_id'],g.hotel_id,rid))
+            conn.execute("UPDATE reservas SET status_pagamento='PENDENTE',financeiro_id=NULL,pago_em=NULL,pago_por=NULL WHERE id=? AND hotel_id=?",(rid,g.hotel_id))
+        else: return jsonify({'erro':'Status de pagamento inválido.'}),400
+        conn.commit(); atual=conn.execute('SELECT status_pagamento FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()['status_pagamento']
+        return jsonify({'mensagem':'Pagamento atualizado.','status_pagamento':atual}),200
+    finally: conn.close()
 
-    if not detalhes_str:
-        detalhes_str.append("Reserva Padrão")
+@app.route('/api/reservas/<int:rid>/cancelar',methods=['PUT'])
+@token_required
+def cancelar_reserva(current_user,role,rid):
+    conn=get_db()
+    try:
+        r=conn.execute('SELECT * FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()
+        if not r: return jsonify({'erro':'Reserva não encontrada.'}),404
+        if r['financeiro_id']:
+            conn.execute("DELETE FROM fluxo_caixa WHERE id=? AND hotel_id=? AND origem_tipo='RESERVA' AND origem_id=?",(r['financeiro_id'],g.hotel_id,rid))
+        conn.execute("UPDATE reservas SET status='CANCELADA',status_pagamento='PENDENTE',financeiro_id=NULL,pago_em=NULL,pago_por=NULL WHERE id=? AND hotel_id=?",(rid,g.hotel_id))
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit(); return jsonify({'mensagem':'Reserva cancelada.'}),200
+    finally: conn.close()
 
-    valor_total = valor_diaria_total * diarias
-    detalhes_resumo = ", ".join(detalhes_str)
-
-    cursor.execute(
-        '''INSERT INTO reservas (hospede_id, quarto_numero, check_in, check_out, detalhes_pessoas, diarias, status, valor_total, status_pagamento, hotel_id) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-        (hospede_id, quarto_numero, check_in, check_out, detalhes_resumo, diarias, 'CONFIRMADA', valor_total, 'PENDENTE', g.hotel_id)
-    )
-    
-    cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
-                   ('ENTRADA', f"Reserva Quarto {quarto_numero} ({diarias} diárias)", valor_total, 'Hospedagem', datetime.date.today().isoformat(),g.hotel_id))
-
-    cursor.execute('UPDATE quartos SET status = ? WHERE numero = ? AND hotel_id=?', ('OCUPADO', quarto_numero,g.hotel_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Reserva efetuada com sucesso!', 'valor_total': valor_total}), 201
-
-# ==========================================
-# API - ESTOQUE & PDV
-# ==========================================
 @app.route('/api/estoque', methods=['GET', 'POST'])
 @token_required
 def gerenciar_estoque(current_user, role):

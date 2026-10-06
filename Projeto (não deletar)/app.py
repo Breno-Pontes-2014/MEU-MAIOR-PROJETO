@@ -487,21 +487,25 @@ def page_root():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        password = request.form.get('password', '').strip()
-        
-        conn = get_db()
-        user = conn.cursor().execute('SELECT * FROM usuarios WHERE username = ?', (username,)).fetchone()
+        username=request.form.get('username','').strip()
+        password=request.form.get('password','')
+        if not check_csrf():
+            return render_template_string(LOGIN_TEMPLATE,erro='Sessão expirada. Recarregue a página.',csrf_token=csrf_token())
+        lock_key=f'{client_ip()}::{username.lower()}'
+        if login_is_locked(lock_key):
+            return render_template_string(LOGIN_TEMPLATE,erro='Muitas tentativas. Tente novamente em alguns minutos.',csrf_token=csrf_token())
+        conn=get_db()
+        user=conn.execute('SELECT * FROM usuarios WHERE username=?',(username,)).fetchone()
         conn.close()
-
-        if (user and check_password_hash(user['password'], password)) or (username == 'admin' and password == 'admin123'):
-            session.permanent = True
-            session['user'] = username
+        if user and check_password_hash(user['password'],password):
+            clear_login_failures(lock_key)
+            session.clear(); session.permanent=True
+            session['user_id']=user['id']; session['user']=user['username']; session['role']=user['role']; session['hotel_id']=user['hotel_id']
+            csrf_token()
             return redirect(url_for('dashboard'))
-        else:
-            return render_template_string(LOGIN_TEMPLATE, erro='Usuário ou senha inválidos!')
-            
-    return render_template_string(LOGIN_TEMPLATE)
+        register_login_failure(lock_key)
+        return render_template_string(LOGIN_TEMPLATE,erro='Usuário ou senha inválidos!',csrf_token=csrf_token())
+    return render_template_string(LOGIN_TEMPLATE,csrf_token=csrf_token())
 
 @app.route('/registro', methods=['GET', 'POST'])
 def registro():

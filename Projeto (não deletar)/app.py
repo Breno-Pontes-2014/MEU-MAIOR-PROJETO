@@ -2168,1256 +2168,705 @@ LOGIN_TEMPLATE = """
 DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="csrf-token" content="{{ csrf_token }}">
-    <title>Hotel Master - Gestão Completa</title>
-    <style>
-        * { 
-            box-sizing: border-box; 
-            margin: 0; 
-            padding: 0; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-        }
-        body { 
-            display: flex; 
-            background: #f4f6f9; 
-            color: #333; 
-            height: 100vh; 
-            overflow: hidden; 
-        }
-        
-        .sidebar { 
-            width: 264px; 
-            background: #111827; 
-            color: #fff; 
-            display: flex; 
-            flex-direction: column; 
-            padding: 20px 14px; 
-            overflow-y: auto; 
-            flex-shrink: 0; 
-        }
-        .brand { 
-            display: flex; 
-            align-items: center; 
-            gap: 10px; 
-            padding: 0 8px 18px; 
-        }
-        .brand-icon { 
-            width: 38px; 
-            height: 38px; 
-            border-radius: 10px; 
-            background: linear-gradient(135deg, #3498db, #2563eb); 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            font-size: 20px; 
-        }
-        .brand-text { 
-            font-size: 17px; 
-            font-weight: 700; 
-            line-height: 1.15; 
-        }
-        .brand-text small { 
-            display: block; 
-            font-size: 11px; 
-            font-weight: 400; 
-            color: #9ca3af; 
-        }
-        .user-card { 
-            display: flex; 
-            align-items: center; 
-            gap: 10px; 
-            background: #1f2937; 
-            padding: 10px 12px; 
-            border-radius: 10px; 
-            margin-bottom: 18px; 
-        }
-        .user-card .avatar { 
-            width: 34px; 
-            height: 34px; 
-            border-radius: 50%; 
-            background: #3498db; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            font-weight: 700; 
-        }
-        .user-card strong { font-size: 13px; display: block; }
-        .user-card span { font-size: 10px; color: #9ca3af; letter-spacing: .5px; }
-        .menu-titulo { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #6b7280; padding: 0 12px 8px; }
-
-        .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
-        .sidebar nav a { 
-            display: flex; 
-            align-items: center; 
-            gap: 10px; 
-            color: #9ca3af; 
-            text-decoration: none; 
-            padding: 10px 12px; 
-            border-radius: 8px; 
-            border-left: 3px solid transparent; 
-            transition: background .15s, color .15s; 
-            font-size: 14px; 
-            cursor: pointer; 
-            user-select: none; 
-        }
-        .sidebar nav a:hover { background: #1f2937; color: #fff; }
-        .sidebar nav a.active { background: rgba(52,152,219,.16); color: #fff; border-left-color: #3498db; font-weight: 600; }
-        .sidebar nav a.oculto { opacity: .45; font-style: italic; }
-        .menu-icone { width: 22px; text-align: center; font-size: 16px; }
-        .menu-nome { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-        .menu-controls { display: none; gap: 3px; }
-        .sidebar.editando .menu-controls { display: flex; }
-        .menu-btn { background: rgba(255,255,255,.1); border: none; color: #fff; width: 22px; height: 22px; border-radius: 5px; font-size: 11px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-        .menu-btn:hover:not(:disabled) { background: rgba(255,255,255,.3); }
-        .menu-btn:disabled { opacity: .25; cursor: default; }
-
-        .sidebar-footer { margin-top: auto; padding-top: 16px; border-top: 1px solid #1f2937; display: flex; flex-direction: column; gap: 8px; }
-        .btn-menu-editar, .btn-menu-restaurar, .btn-sair { width: 100%; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; border: 1px solid transparent; }
-        .btn-menu-editar { background: #1f2937; color: #e5e7eb; border-color: #374151; }
-        .btn-menu-editar:hover { background: #374151; }
-        .sidebar.editando .btn-menu-editar { background: #3498db; color: #fff; border-color: #3498db; }
-        .btn-menu-restaurar { background: transparent; color: #9ca3af; border-color: #374151; font-size: 12px; }
-        .btn-menu-restaurar:hover { color: #fff; border-color: #6b7280; }
-        .btn-sair { background: transparent; color: #f87171; }
-        .btn-sair:hover { background: rgba(248,113,113,.12); }
-
-        .main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
-        header { background: white; padding: 15px 30px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
-        .content-body { padding: 30px; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        
-        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
-        th { background: #f8f9fa; color: #333; }
-        
-        .badge { padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; }
-        .badge.disponivel { background: #d4edda; color: #155724; }
-        .badge.ocupado { background: #fff3cd; color: #856404; }
-        .badge.pendente { background: #f8d7da; color: #721c24; }
-        .badge.confirmada { background: #d4edda; color: #155724; }
-        
-        .btn { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        .btn-danger { background: #e74c3c; color: white; }
-        .btn-primary { background: #3498db; color: white; }
-        .btn-success { background: #2ecc71; color: white; }
-        .btn-secondary { background: #7f8c8d; color: white; }
-        
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
-        .form-group { display: flex; flex-direction: column; }
-        .form-group label { margin-bottom: 5px; font-weight: 600; font-size: 13px; }
-        .form-group input, .form-group select { padding: 9px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; width: 100%; }
-        
-        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-top: 15px; }
-        .metric-card { background: #f8f9fa; padding: 15px; border-radius: 6px; border-left: 4px solid #3498db; }
-        .metric-card h5 { color: #666; font-size: 12px; margin-bottom: 5px; }
-        .metric-card p { font-size: 20px; font-weight: bold; color: #333; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>Hotel Master | Gestão hoteleira</title>
+<style>
+:root{
+  --primary:#1f4f8f;--primary-dark:#173b6a;--bg:#f4f6f9;--surface:#fff;--text:#1f2937;
+  --muted:#6b7280;--border:#e5e7eb;--success:#157347;--warning:#9a6700;--danger:#b42318;
+  --sidebar:#172033;--sidebar-2:#202b40;--sidebar-text:#c7cfdb;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--text);background:var(--bg)}
+body{min-height:100vh}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.app-shell{display:flex;min-height:100vh}
+.sidebar{width:258px;background:var(--sidebar);color:#fff;display:flex;flex-direction:column;min-height:100vh}
+.brand{padding:24px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.brand-title{font-size:19px;font-weight:750;letter-spacing:.2px}
+.brand-subtitle{display:block;margin-top:3px;font-size:12px;color:#97a4b7}
+.user-panel{padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.user-name{font-size:14px;font-weight:650}
+.user-role{font-size:11px;color:#97a4b7;margin-top:4px}
+.hotel-name{font-size:12px;color:#c7cfdb;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-area{padding:14px 10px;overflow:auto;flex:1}
+.nav-group-title{font-size:10px;text-transform:uppercase;letter-spacing:1.1px;color:#8491a5;padding:0 9px 8px}
+.nav-btn{display:flex;align-items:center;width:100%;gap:10px;padding:10px 11px;margin-bottom:3px;background:transparent;border:1px solid transparent;border-radius:8px;color:var(--sidebar-text);text-align:left}
+.nav-btn:hover{background:var(--sidebar-2);color:#fff}
+.nav-btn.active{background:#284265;border-color:#365a88;color:#fff;font-weight:650}
+.nav-code{width:26px;height:26px;border-radius:6px;background:#263651;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:750}
+.nav-btn.active .nav-code{background:#3b6ba4}
+.sidebar-footer{padding:14px 12px;border-top:1px solid rgba(255,255,255,.08);display:grid;gap:8px}
+.btn-outline-light,.btn-logout{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #39455b;background:transparent;color:#d5dbe3}
+.btn-outline-light:hover{background:#263149}
+.btn-logout{color:#f5b4b0}
+.btn-logout:hover{background:rgba(180,35,24,.12)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--border);min-height:70px;display:flex;align-items:center;justify-content:space-between;padding:0 26px}
+.topbar-left{display:flex;align-items:center;gap:12px;min-width:0}
+.page-title{font-size:21px;font-weight:730;margin:0}
+.page-subtitle{font-size:12px;color:var(--muted);margin-top:3px}
+.topbar-actions{display:flex;align-items:center;gap:8px}
+.content{padding:24px;max-width:1600px;width:100%;margin:0 auto}
+.tab{display:none}.tab.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.card-title{font-size:16px;font-weight:730;margin:0}
+.card-help{font-size:12px;color:var(--muted);margin:4px 0 0}
+.form-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+.field{grid-column:span 3;display:flex;flex-direction:column;gap:6px}
+.field.span-6{grid-column:span 6}.field.span-9{grid-column:span 9}.field.span-12{grid-column:span 12}
+.field label{font-size:12px;font-weight:650;color:#374151}
+.field input,.field select,.field textarea{width:100%;padding:10px 11px;border:1px solid #ccd3dd;border-radius:8px;background:#fff;color:#111827;outline:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#6091c8;box-shadow:0 0 0 3px rgba(31,79,143,.1)}
+.field textarea{min-height:88px;resize:vertical}
+.form-actions{grid-column:span 12;display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.btn{padding:9px 13px;border:1px solid transparent;border-radius:8px;font-size:12px;font-weight:650}
+.btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
+.btn-secondary{background:#fff;color:#374151;border-color:#cbd5e1}.btn-secondary:hover{background:#f8fafc}
+.btn-success{background:#19724a;color:#fff}.btn-success:hover{background:#145a3b}
+.btn-danger{background:#b42318;color:#fff}.btn-danger:hover{background:#941f13}
+.btn-warning{background:#a05c00;color:#fff}.btn-warning:hover{background:#854d00}
+.btn-link{background:transparent;color:var(--primary);padding:6px 8px;border:0}
+.hidden{display:none!important}
+.notice{padding:11px 13px;border-radius:9px;margin-bottom:14px;font-size:12px}
+.notice.info{background:#edf4ff;color:#244e7c;border:1px solid #c9dcf5}
+.notice.success{background:#edf8f1;color:#155a3e;border:1px solid #c6e7d4}
+.notice.warning{background:#fff7e6;color:#7a5200;border:1px solid #f2d59b}
+.notice.danger{background:#fff0ee;color:#8f2016;border:1px solid #f1c0ba}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.metric{background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px}
+.metric-label{font-size:11px;color:var(--muted);font-weight:650;text-transform:uppercase;letter-spacing:.7px}
+.metric-value{font-size:24px;font-weight:760;margin-top:8px}
+.metric-note{font-size:11px;color:var(--muted);margin-top:4px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}
+table{width:100%;border-collapse:collapse;background:#fff;min-width:780px}
+th,td{padding:11px 12px;border-bottom:1px solid #edf0f3;text-align:left;font-size:12px;vertical-align:middle}
+th{background:#f8fafc;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.35px;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.row-actions{display:flex;gap:5px;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.2px}
+.badge-ok{background:#e8f5ed;color:#16643f}.badge-pending{background:#fff7e2;color:#815800}.badge-danger{background:#fdecea;color:#9f2419}.badge-neutral{background:#eef2f6;color:#52606d}.badge-blue{background:#eaf2fc;color:#22528b}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.small{font-size:11px;color:var(--muted)}
+.empty{padding:30px;text-align:center;color:var(--muted);font-size:12px}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:8px;font-size:12px}
+.kv div:nth-child(odd){color:var(--muted)}
+.inline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.platform-status{padding:4px 8px;border-radius:999px;font-size:10px;font-weight:700}
+.platform-open{background:#e8f5ed;color:#16643f}.platform-blocked{background:#fdecea;color:#9f2419}
+.toast-host{position:fixed;right:20px;bottom:20px;z-index:9999;display:grid;gap:8px;max-width:380px}
+.toast{background:#111827;color:#fff;padding:12px 14px;border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.18);font-size:12px}
+.toast.success{background:#14532d}.toast.error{background:#991b1b}
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-backdrop.open{display:flex}
+.modal{width:min(760px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:14px;border:1px solid var(--border);box-shadow:0 30px 80px rgba(0,0,0,.25)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid var(--border)}
+.modal-body{padding:20px}
+.modal-footer{padding:16px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:1100px){.sidebar{width:220px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.field{grid-column:span 6}}
+@media(max-width:760px){.app-shell{display:block}.sidebar{width:100%;min-height:auto}.nav-area{max-height:240px}.main{min-height:70vh}.topbar{padding:0 16px}.content{padding:14px}.field,.field.span-6,.field.span-9{grid-column:span 12}.metrics{grid-template-columns:1fr}.topbar-left{min-width:0}.page-title{font-size:17px}.topbar-actions .btn-secondary{display:none}}
+</style>
 </head>
 <body>
-    <div class="sidebar" id="sidebar">
-        <div class="brand">
-            <div class="brand-icon">🏨</div>
-            <div class="brand-text">Hotel Master<small>Gestão hoteleira</small></div>
-        </div>
-        <div class="user-card">
-            <div class="avatar">A</div>
-            <div><strong>Administrador</strong><span>USER</span></div>
-        </div>
-
-        <div class="menu-titulo">Menu</div>
-        <nav id="menu-lateral">
-            <!-- Gerado dinamicamente -->
-        </nav>
-
-        <div class="sidebar-footer">
-            <button type="button" id="btn-editar-menu" class="btn-menu-editar" onclick="alternarEdicaoMenu()">✏️ Editar menu</button>
-            <button type="button" id="btn-restaurar-menu" class="btn-menu-restaurar" style="display:none;" onclick="restaurarMenuPadrao()">↺ Restaurar padrão</button>
-            <a href="/logout" class="btn-sair">⎋ Sair</a>
-        </div>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">Hotel Master</div>
+      <span class="brand-subtitle">Gestão hoteleira profissional</span>
     </div>
-
-    <div class="main-content">
-        <header>
-            <h3 id="page-title">Gerenciamento de Quartos</h3>
-        </header>
-        <div class="content-body">
-            
-            <div id="tab-quartos" class="tab-content active">
-                <div class="card">
-                    <h4>Cadastrar Novo Quarto</h4>
-                    <form id="form-quarto" onsubmit="criarQuarto(event)" class="form-grid">
-                        <div class="form-group">
-                            <label>Número</label>
-                            <input type="text" id="q-numero" placeholder="ex: 103" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Tipo (Editável livremente)</label>
-                            <input type="text" id="q-tipo" placeholder="ex: Casal Deluxe" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Preço Diária Estabelecida (R$)</label>
-                            <input type="number" step="0.01" id="q-preco" required>
-                        </div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-primary" style="margin-top: 22px;">Cadastrar</button>
-                        </div>
-                    </form>
-                </div>
-                
-                <div class="card">
-                    <h4>⚡ Gerar Quartos Padrão em Lote</h4>
-                    <p style="font-size: 13px; color: #666; margin-top: 6px;">Informe a quantidade e o modelo padrão: o sistema cria todos os quartos de uma vez, já numerados.</p>
-                    <form id="form-quartos-lote" onsubmit="gerarQuartosLote(event)" class="form-grid">
-                        <div class="form-group">
-                            <label>Quantidade de quartos</label>
-                            <input type="number" id="lote-qtd" min="1" max="500" value="10" required oninput="atualizarPrevisaoLote()">
-                        </div>
-                        <div class="form-group">
-                            <label>Tipo padrão</label>
-                            <input type="text" id="lote-tipo" value="Standard" maxlength="60" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Diária estabelecida base (R$)</label>
-                            <input type="number" step="0.01" min="0.01" id="lote-preco" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Primeiro número</label>
-                            <input type="number" id="lote-inicial" min="1" value="101" required oninput="atualizarPrevisaoLote()">
-                        </div>
-                        <div class="form-group">
-                            <label>Quartos por andar (0 = sequencial)</label>
-                            <input type="number" id="lote-por-andar" min="0" max="99" value="10" oninput="atualizarPrevisaoLote()">
-                        </div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-success" style="margin-top: 22px;">Gerar quartos</button>
-                        </div>
-                    </form>
-                    <p id="lote-previa" style="margin-top: 12px; font-size: 13px; color: #2c3e50;"></p>
-                </div>
-                
-                <div class="card">
-                    <h4>Quartos Cadastrados <span id="contagem-quartos" style="font-weight: normal; color: #888;"></span></h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Número</th>
-                                <th>Tipo</th>
-                                <th>Diária Estabelecida</th>
-                                <th>Status</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-quartos"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-hospedes" class="tab-content">
-                <div class="card">
-                    <h4>Novo Hóspede</h4>
-                    <form id="form-hospede" onsubmit="criarHospede(event)" class="form-grid">
-                        <div class="form-group"><label>Nome</label><input type="text" id="h-nome" required></div>
-                        <div class="form-group"><label>Documento</label><input type="text" id="h-doc"></div>
-                        <div class="form-group"><label>Telefone</label><input type="text" id="h-tel"></div>
-                        <div class="form-group"><label>E-mail</label><input type="email" id="h-email"></div>
-                        <div class="form-group" style="grid-column: span 2;">
-                            <button type="submit" class="btn btn-primary">Salvar Hóspede</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Hóspedes Cadastrados</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Nome</th>
-                                <th>Documento</th>
-                                <th>Telefone</th>
-                                <th>E-mail</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-hospedes"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-faixas" class="tab-content">
-                <div class="card">
-                    <h4>Cadastrar Categoria / Faixa Etária</h4>
-                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Cadastre categorias de pessoas. A diária base já é a do quarto. Você pode configurar um valor adicional fixo caso a pessoa gere um custo extra (ex: Cama extra R$50,00).</p>
-                    <form id="form-faixa" onsubmit="criarFaixa(event)" class="form-grid">
-                        <div class="form-group"><label>Nome (ex: Criança, Adulto, Cama Extra)</label><input type="text" id="fe-nome" required></div>
-                        <div class="form-group"><label>Idade Mínima</label><input type="number" id="fe-min" required></div>
-                        <div class="form-group"><label>Idade Máxima</label><input type="number" id="fe-max" required></div>
-                        <div class="form-group"><label>Valor Adicional na Diária (R$)</label><input type="number" step="0.01" id="fe-adicional" value="0.0" required></div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-primary" style="margin-top: 22px;">Salvar Categoria</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Categorias Cadastradas</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Nome</th>
-                                <th>Idade</th>
-                                <th>Taxa Adicional (R$)</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-faixas"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-reservas" class="tab-content">
-                <div class="card">
-                    <h4>Efetuar Reserva</h4>
-                    <form id="form-reserva" onsubmit="criarReserva(event)" class="form-grid">
-                        <div class="form-group"><label>ID Hóspede Principal</label><input type="number" id="r-hospede-id" required></div>
-                        <div class="form-group"><label>Número do Quarto</label><input type="text" id="r-quarto-num" required></div>
-                        <div class="form-group"><label>Check-in</label><input type="date" id="r-checkin" required></div>
-                        <div class="form-group"><label>Check-out</label><input type="date" id="r-checkout" required></div>
-                        <div class="form-group"><label>Quantidade de Diárias</label><input type="number" id="r-diarias" value="1" required></div>
-                        <div class="form-group" style="grid-column: span 2;">
-                            <label>Composição Adicional da Reserva</label>
-                            <div id="container-faixas-reserva" style="display: flex; gap: 15px; margin-top: 8px; flex-wrap: wrap;"></div>
-                        </div>
-                        <div class="form-group" style="grid-column: span 2;">
-                            <button type="submit" class="btn btn-primary">Calcular e Salvar Reserva</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Lista de Reservas</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Hóspede ID</th>
-                                <th>Quarto</th>
-                                <th>Check-in / Out</th>
-                                <th>Composição</th>
-                                <th>Diárias</th>
-                                <th>Total (R$)</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-reservas"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-estoque" class="tab-content">
-                <div class="card">
-                    <h4>Adicionar Produto ao Estoque / PDV</h4>
-                    <form id="form-estoque" onsubmit="criarEstoque(event)" class="form-grid">
-                        <div class="form-group"><label>Nome do Item</label><input type="text" id="e-item" required></div>
-                        <div class="form-group"><label>Categoria</label><input type="text" id="e-cat" required></div>
-                        <div class="form-group"><label>Quantidade</label><input type="number" id="e-qtd" required></div>
-                        <div class="form-group"><label>Preço Unitário (R$)</label><input type="number" step="0.01" id="e-preco" required></div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-primary" style="margin-top: 22px;">Adicionar</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Itens em Estoque</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Item</th>
-                                <th>Categoria</th>
-                                <th>Quantidade</th>
-                                <th>Preço Unitário</th>
-                                <th>Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-estoque"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-financeiro" class="tab-content">
-                <div class="card">
-                    <h4>Novo Lançamento Financeiro (Caixa)</h4>
-                    <form id="form-financeiro" onsubmit="criarFinanceiro(event)" class="form-grid">
-                        <div class="form-group">
-                            <label>Tipo</label>
-                            <select id="f-tipo">
-                                <option value="ENTRADA">ENTRADA</option>
-                                <option value="SAIDA">SAÍDA</option>
-                            </select>
-                        </div>
-                        <div class="form-group"><label>Descrição</label><input type="text" id="f-desc" required></div>
-                        <div class="form-group"><label>Valor (R$)</label><input type="number" step="0.01" id="f-valor" required></div>
-                        <div class="form-group"><label>Categoria</label><input type="text" id="f-cat" value="Geral" required></div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-primary" style="margin-top: 22px;">Lançar</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Fluxo de Caixa</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Data</th>
-                                <th>Tipo</th>
-                                <th>Descrição</th>
-                                <th>Categoria</th>
-                                <th>Valor</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-financeiro"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-ordens" class="tab-content">
-                <div class="card">
-                    <h4>Nova Ordem de Serviço</h4>
-                    <form id="form-ordem" onsubmit="criarOrdem(event)" class="form-grid">
-                        <div class="form-group"><label>Quarto</label><input type="text" id="os-quarto" placeholder="ex: 101" required></div>
-                        <div class="form-group">
-                            <label>Tipo</label>
-                            <select id="os-tipo">
-                                <option value="Limpeza">Limpeza</option>
-                                <option value="Manutenção Elétrica">Manutenção Elétrica</option>
-                                <option value="Manutenção Hidráulica">Manutenção Hidráulica</option>
-                                <option value="Outros">Outros</option>
-                            </select>
-                        </div>
-                        <div class="form-group"><label>Descrição</label><input type="text" id="os-desc" required></div>
-                        <div class="form-group" style="justify-content: flex-end;">
-                            <button type="submit" class="btn btn-primary" style="margin-top: 22px;">Criar OS</button>
-                        </div>
-                    </form>
-                </div>
-                <div class="card">
-                    <h4>Ordens de Serviço</h4>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Quarto</th>
-                                <th>Tipo</th>
-                                <th>Descrição</th>
-                                <th>Status</th>
-                                <th>Ação</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tabela-ordens"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="tab-relatorios" class="tab-content">
-                <div class="card">
-                    <h4>Relatórios Gerenciais Avançados</h4>
-                    <div class="metrics-grid" id="dados-relatorio">Carregando métricas...</div>
-                </div>
-            </div>
-
-            <div id="tab-integracoes" class="tab-content">
-                <div class="card">
-                    <h4>🔗 Canais de Reserva e Localização</h4>
-                    <p style="font-size:13px;color:#666;margin-bottom:15px;">Cadastre os links públicos do hotel. Eles ficam separados por hotel e podem ser usados na futura página comercial/central de reservas.</p>
-                    <form id="form-integracoes" onsubmit="salvarIntegracoes(event)" class="form-grid">
-                        <div class="form-group"><label>Booking.com</label><input type="url" id="int-booking" placeholder="https://www.booking.com/..."></div>
-                        <div class="form-group"><label>Airbnb</label><input type="url" id="int-airbnb" placeholder="https://www.airbnb.com/rooms/..."></div>
-                        <div class="form-group"><label>Expedia</label><input type="url" id="int-expedia" placeholder="https://www.expedia.com/..."></div>
-                        <div class="form-group"><label>Hoteis.com</label><input type="url" id="int-hoteis" placeholder="https://www.hoteis.com/..."></div>
-                        <div class="form-group"><label>Site próprio</label><input type="url" id="int-site" placeholder="https://seuhotel.com.br"></div>
-                        <div class="form-group"><label>Google Maps (link)</label><input type="url" id="int-maps-url" placeholder="https://www.google.com/maps/..."></div>
-                        <div class="form-group"><label>Nome no Google Maps</label><input type="text" id="int-maps-nome" maxlength="200"></div>
-                        <div class="form-group"><label>Place ID</label><input type="text" id="int-place-id" maxlength="300" placeholder="ChIJ..."></div>
-                        <div class="form-group" style="grid-column:span 2;"><label>Endereço</label><input type="text" id="int-endereco" maxlength="500"></div>
-                        <div class="form-group"><label>Latitude</label><input type="number" step="any" id="int-lat"></div>
-                        <div class="form-group"><label>Longitude</label><input type="number" step="any" id="int-lng"></div>
-                        <div class="form-group" style="grid-column:span 2;display:flex;gap:10px;align-items:flex-end;">
-                            <button type="button" class="btn btn-secondary" onclick="pesquisarGoogleMaps()">🔎 Pesquisar no Google Maps</button>
-                            <button type="submit" class="btn btn-primary">💾 Salvar integrações</button>
-                        </div>
-                    </form>
-                    <div id="resultado-maps" style="margin-top:15px;"></div>
-                    <div id="mapa-hotel" style="margin-top:15px;"></div>
-                </div>
-
-                <div class="card">
-                    <h4>💳 Assinatura do Hotel Master</h4>
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Plano</label>
-                            <select id="saas-plano"></select>
-                        </div>
-                        <div class="form-group">
-                            <label>Status atual</label>
-                            <input type="text" id="saas-status" readonly>
-                        </div>
-                        <div class="form-group" style="justify-content:flex-end;">
-                            <button type="button" class="btn btn-primary" onclick="contratarPlano()">Abrir Checkout recorrente</button>
-                        </div>
-                    </div>
-                    <p style="font-size:12px;color:#777;margin-top:10px;">O retorno do Checkout não libera o acesso sozinho. A assinatura é atualizada somente depois da confirmação recebida pelo webhook.</p>
-                </div>
-
-                <div class="card">
-                    <h4>💳 Webhook de cobrança</h4>
-                    <p style="font-size:13px;color:#666;">Para este SaaS, recomendo <b>Asaas</b>. O endpoint abaixo recebe os eventos e valida o token configurado no servidor.</p>
-                    <div class="form-group">
-                        <label>URL do webhook Asaas</label>
-                        <input type="text" id="int-webhook-url" readonly>
-                    </div>
-                    <p style="font-size:12px;color:#777;margin-top:8px;">No Asaas, configure o token de autenticação e use o header <code>asaas-access-token</code>. O endpoint registra eventos de forma idempotente antes de alterar a assinatura.</p>
-                </div>
-            </div>
-
-            <div id="tab-whatsapp" class="tab-content">
-                <div class="card">
-                    <h4>Central de Mensagens WhatsApp</h4>
-                    <div class="form-grid">
-                        <div class="form-group"><label>Telefone do Hóspede (com DDD)</label><input type="text" id="wa-tel" placeholder="5561999999999"></div>
-                        <div class="form-group" style="grid-column: span 2;">
-                            <label>Modelo de Mensagem</label>
-                            <select id="wa-template" onchange="preencherTemplateWhatsApp()">
-                                <option value="Olá! Sua reserva no Hotel Master está confirmada. Aguardamos sua visita!">Confirmação de Reserva</option>
-                                <option value="Olá! Lembramos que seu check-out é amanhã. Tenha uma excelente estadia!">Lembrete de Check-out</option>
-                                <option value="Olá! Agradecemos sua estadia no Hotel Master. Esperamos vê-lo em breve!">Agradecimento Pós-Estadia</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="grid-column: span 2;"><label>Mensagem Personalizada</label><input type="text" id="wa-msg"></div>
-                        <div class="form-group">
-                            <button type="button" class="btn btn-success" onclick="enviarWhatsApp()">Enviar via WhatsApp</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-        </div>
+    <div class="user-panel">
+      <div class="user-name" id="user-name">Usuário</div>
+      <div class="user-role" id="user-role">Perfil</div>
+      <div class="hotel-name" id="hotel-name">Hotel</div>
     </div>
+    <div class="nav-area">
+      <div class="nav-group-title">Navegação</div>
+      <div id="nav"></div>
+    </div>
+    <div class="sidebar-footer">
+      <button type="button" class="btn-outline-light" id="btn-back-side">Voltar</button>
+      <a href="/logout" class="btn-logout" style="display:block;text-align:center;text-decoration:none;padding:10px 12px;border-radius:8px;">Sair</a>
+    </div>
+  </aside>
 
-    <script>
-        const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-        const ORIGINAL_FETCH = window.fetch.bind(window);
-        window.fetch = function(input, init = {}) {
-            const method = (init.method || 'GET').toUpperCase();
-            if (['POST','PUT','PATCH','DELETE'].includes(method)) {
-                const headers = new Headers(init.headers || {});
-                if (CSRF_TOKEN) headers.set('X-CSRFToken', CSRF_TOKEN);
-                init = { ...init, headers };
-            }
-            return ORIGINAL_FETCH(input, init);
-        };
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div>
+          <h1 class="page-title" id="page-title">Painel</h1>
+          <div class="page-subtitle" id="page-subtitle">Gestão operacional</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-secondary" id="btn-back-top">Voltar</button>
+      </div>
+    </header>
 
-        let faixasGlobais = [];
+    <section class="content">
+      <div id="tab-painel" class="tab active"></div>
 
-        const MENU_KEY = 'hotel_master_menu_v2';
-        let abaAtual = 'quartos';
-        let menuEditando = false;
+      <div id="tab-quartos" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="quarto-form-title">Novo quarto</h2><p class="card-help">Cadastre, edite e controle a disponibilidade dos quartos.</p></div></div>
+          <form id="form-quarto" class="form-grid">
+            <input type="hidden" id="q-edit-id">
+            <div class="field"><label>Número</label><input id="q-numero" required maxlength="30"></div>
+            <div class="field"><label>Tipo</label><input id="q-tipo" required maxlength="80" placeholder="Standard, Luxo, Suíte"></div>
+            <div class="field"><label>Diária (R$)</label><input id="q-preco" type="number" min="0.01" step="0.01" required></div>
+            <div class="field"><label>Status</label><select id="q-status"><option value="DISPONIVEL">Disponível</option><option value="RESERVADO">Reservado</option><option value="OCUPADO">Ocupado</option><option value="MANUTENCAO">Manutenção</option></select></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="q-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="q-submit">Cadastrar quarto</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Geração em lote</h2><p class="card-help">Crie vários quartos mantendo a regra de numeração por andar já existente.</p></div></div>
+          <form id="form-lote" class="form-grid">
+            <div class="field"><label>Quantidade</label><input id="lote-qtd" type="number" min="1" max="500" value="10" required></div>
+            <div class="field"><label>Tipo padrão</label><input id="lote-tipo" value="Standard" maxlength="80" required></div>
+            <div class="field"><label>Diária base (R$)</label><input id="lote-preco" type="number" min="0.01" step="0.01" required></div>
+            <div class="field"><label>Primeiro número</label><input id="lote-inicial" type="number" min="1" value="101" required></div>
+            <div class="field"><label>Quartos por andar</label><input id="lote-por-andar" type="number" min="0" max="99" value="10"></div>
+            <div class="field span-6"><label>Prévia</label><div id="lote-previa" class="notice info" style="margin:0;">Informe os dados para visualizar a sequência.</div></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">Gerar quartos</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Quartos cadastrados <span class="small" id="contagem-quartos"></span></h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Número</th><th>Tipo</th><th>Diária</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-quartos"></tbody></table></div>
+        </div>
+      </div>
 
-        const menuItensPadrao = [
-            { id: 'quartos',    icone: '🛏️', nome: 'Quartos',               visivel: true },
-            { id: 'hospedes',   icone: '👥', nome: 'Hóspedes',              visivel: true },
-            { id: 'faixas',     icone: '⚙️', nome: 'Categorias Pessoas',    visivel: true },
-            { id: 'reservas',   icone: '📅', nome: 'Reservas & Preços',     visivel: true },
-            { id: 'estoque',    icone: '🛒', nome: 'PDV & Estoque',         visivel: true },
-            { id: 'financeiro', icone: '💰', nome: 'Financeiro',            visivel: true },
-            { id: 'ordens',     icone: '🛠️', nome: 'Ordens de Serviço',     visivel: true },
-            { id: 'relatorios', icone: '📊', nome: 'Relatórios (ADR/RevPAR)', visivel: true },
-            { id: 'whatsapp',   icone: '💬', nome: 'WhatsApp',              visivel: true },
-            { id: 'integracoes', icone: '🔗', nome: 'Integrações',           visivel: true }
-        ];
+      <div id="tab-hospedes" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="hospede-form-title">Novo hóspede</h2><p class="card-help">Mantenha os dados do cliente atualizados para reservas e pedidos.</p></div></div>
+          <form id="form-hospede" class="form-grid">
+            <input type="hidden" id="h-edit-id">
+            <div class="field span-6"><label>Nome completo</label><input id="h-nome" required maxlength="180"></div>
+            <div class="field"><label>Documento</label><input id="h-doc" maxlength="40"></div>
+            <div class="field"><label>Telefone</label><input id="h-tel" maxlength="30"></div>
+            <div class="field"><label>E-mail</label><input id="h-email" type="email" maxlength="160"></div>
+            <div class="field span-9"><label>Observações</label><textarea id="h-obs" maxlength="1000"></textarea></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="h-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="h-submit">Salvar hóspede</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Hóspedes</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Documento</th><th>Telefone</th><th>E-mail</th><th>Ações</th></tr></thead><tbody id="tabela-hospedes"></tbody></table></div>
+        </div>
+      </div>
 
-        function lerJsonLocal(chave) {
-            try { return JSON.parse(localStorage.getItem(chave)); } catch (e) { return null; }
-        }
+      <div id="tab-categorias" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="cat-form-title">Nova categoria de pessoa</h2><p class="card-help">Use a categoria para controlar pessoas e adicionais na diária.</p></div></div>
+          <form id="form-cat" class="form-grid">
+            <input type="hidden" id="cat-edit-id">
+            <div class="field span-6"><label>Nome</label><input id="cat-nome" required maxlength="100"></div>
+            <div class="field"><label>Idade mínima</label><input id="cat-min" type="number" min="0" required></div>
+            <div class="field"><label>Idade máxima</label><input id="cat-max" type="number" min="0" required></div>
+            <div class="field"><label>Adicional por diária (R$)</label><input id="cat-adicional" type="number" min="0" step="0.01" value="0"></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="cat-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="cat-submit">Salvar categoria</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Idade</th><th>Adicional</th><th>Ações</th></tr></thead><tbody id="tabela-categorias"></tbody></table></div></div>
+      </div>
 
-        function obterMenuConfig() {
-            let salvo = lerJsonLocal(MENU_KEY);
-            if (!Array.isArray(salvo)) salvo = lerJsonLocal('hotel_master_menu'); 
-            const padrao = JSON.parse(JSON.stringify(menuItensPadrao));
-            if (!Array.isArray(salvo)) return padrao;
+      <div id="tab-reservas" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="reserva-form-title">Nova reserva</h2><p class="card-help">O sistema impede conflito de datas e registra pagamento separadamente da receita.</p></div></div>
+          <form id="form-reserva" class="form-grid">
+            <input type="hidden" id="r-edit-id">
+            <div class="field span-6"><label>Hóspede</label><select id="r-hospede-id" required></select></div>
+            <div class="field"><label>Quarto</label><select id="r-quarto-num" required></select></div>
+            <div class="field"><label>Check-in</label><input id="r-checkin" type="date" required></div>
+            <div class="field"><label>Check-out</label><input id="r-checkout" type="date" required></div>
+            <div class="field span-12"><label>Composição de pessoas</label><div id="container-faixas-reserva" class="inline-grid"></div></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="r-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="r-submit">Criar reserva</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Reservas</h2><p class="card-help">Use "Pagou" somente quando a entrada tiver sido efetivamente recebida.</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Hóspede</th><th>Quarto</th><th>Período</th><th>Diárias</th><th>Total</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-reservas"></tbody></table></div>
+        </div>
+      </div>
 
-            const resultado = [];
-            salvo.forEach(s => {
-                const p = padrao.find(x => x.id === s.id);
-                if (!p) return;
-                const nomePersonalizado = (s.icone && typeof s.nome === 'string' && s.nome.trim()) ? s.nome.trim() : p.nome;
-                resultado.push({ ...p, nome: nomePersonalizado, visivel: s.visivel !== false });
-            });
-            padrao.forEach(p => { if (!resultado.some(r => r.id === p.id)) resultado.push(p); });
-            return resultado;
-        }
+      <div id="tab-servicos" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="servico-form-title">Novo serviço</h2><p class="card-help">A lista já começa com serviços essenciais e pode ser personalizada pelo hotel.</p></div></div>
+          <form id="form-servico" class="form-grid">
+            <input type="hidden" id="s-edit-id">
+            <div class="field span-6"><label>Serviço</label><input id="s-nome" required maxlength="120" placeholder="Ex.: Toalha extra"></div>
+            <div class="field"><label>Categoria</label><input id="s-categoria" maxlength="80" value="Diversos"></div>
+            <div class="field"><label>Unidade</label><input id="s-unidade" maxlength="30" value="unidade"></div>
+            <div class="field"><label>Preço (R$)</label><input id="s-preco" type="number" min="0" step="0.01" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="s-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="s-submit">Salvar serviço</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Lançar pedido ao hóspede</h2><p class="card-help">Exemplo: o cliente pediu uma toalha extra. O lançamento fica vinculado ao quarto, hóspede e, quando houver, à reserva.</p></div></div>
+          <form id="form-pedido" class="form-grid">
+            <div class="field span-6"><label>Quarto</label><select id="p-quarto" required></select></div>
+            <div class="field span-6"><label>Hóspede</label><select id="p-hospede"></select></div>
+            <div class="field span-6"><label>Serviço cadastrado</label><select id="p-servico"><option value="">Selecionar serviço</option></select></div>
+            <div class="field span-6"><label>Item personalizado</label><input id="p-item" maxlength="120" placeholder="Ex.: Adaptador de tomada"></div>
+            <div class="field"><label>Quantidade</label><input id="p-qtd" type="number" min="0.01" step="0.01" value="1"></div>
+            <div class="field"><label>Preço unitário (R$)</label><input id="p-preco" type="number" min="0" step="0.01" value="0"></div>
+            <div class="field span-9"><label>Observação</label><input id="p-desc" maxlength="500" placeholder="Detalhes do pedido"></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">Lançar pedido</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Serviços cadastrados</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Serviço</th><th>Categoria</th><th>Preço</th><th>Unidade</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-servicos"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Pedidos dos hóspedes</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Quarto</th><th>Hóspede</th><th>Item</th><th>Qtd.</th><th>Total</th><th>Status</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-pedidos"></tbody></table></div>
+        </div>
+      </div>
 
-        function salvarMenuConfig(menu) {
-            localStorage.setItem(MENU_KEY, JSON.stringify(menu));
-            renderizarMenu();
-        }
+      <div id="tab-ordens" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="os-form-title">Nova ordem de serviço</h2><p class="card-help">Associe cada solicitação ao quarto e ao hóspede, e direcione para limpeza ou manutenção.</p></div></div>
+          <form id="form-os" class="form-grid">
+            <input type="hidden" id="os-edit-id">
+            <div class="field"><label>Quarto</label><select id="os-quarto" required></select></div>
+            <div class="field"><label>Hóspede</label><select id="os-hospede"></select></div>
+            <div class="field"><label>Tipo</label><select id="os-tipo"><option>Limpeza</option><option>Manutenção elétrica</option><option>Manutenção hidráulica</option><option>Governança</option><option>Outros</option></select></div>
+            <div class="field"><label>Prioridade</label><select id="os-prioridade"><option value="BAIXA">Baixa</option><option value="NORMAL" selected>Normal</option><option value="ALTA">Alta</option><option value="URGENTE">Urgente</option></select></div>
+            <div class="field span-6"><label>Responsável</label><select id="os-responsavel"><option value="">A definir</option></select></div>
+            <div class="field span-12"><label>Descrição</label><textarea id="os-desc" required maxlength="1000" placeholder="Descreva o que deve ser feito."></textarea></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="os-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="os-submit">Criar OS</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Quarto</th><th>Hóspede</th><th>Tipo</th><th>Prioridade</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-os"></tbody></table></div></div>
+      </div>
 
-        function criarBotaoMenu(texto, titulo, desabilitado, acao) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'menu-btn';
-            b.textContent = texto;
-            b.title = titulo;
-            b.disabled = desabilitado;
-            b.addEventListener('click', (ev) => { ev.stopPropagation(); acao(); });
-            return b;
-        }
+      <div id="tab-equipe" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="user-form-title">Novo acesso</h2><p class="card-help">Crie perfis separados para recepção, gerente, limpeza, manutenção e financeiro.</p></div></div>
+          <form id="form-user" class="form-grid">
+            <input type="hidden" id="u-edit-id">
+            <div class="field"><label>Nome</label><input id="u-nome" required maxlength="160"></div>
+            <div class="field"><label>Usuário</label><input id="u-username" required maxlength="80"></div>
+            <div class="field"><label>Perfil</label><select id="u-role"><option value="recepcao">Recepção</option><option value="gerente">Gerente</option><option value="limpeza">Limpeza</option><option value="manutencao">Manutenção</option><option value="financeiro">Financeiro</option></select></div>
+            <div class="field"><label>E-mail</label><input id="u-email" type="email" maxlength="160"></div>
+            <div class="field span-6"><label>Senha <span class="small">mínimo de 10 caracteres, maiúscula, minúscula e número</span></label><input id="u-password" type="password" maxlength="160"></div>
+            <div class="field"><label>Status</label><select id="u-ativo"><option value="1">Ativo</option><option value="0">Bloqueado</option></select></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="u-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="u-submit">Criar acesso</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-equipe"></tbody></table></div></div>
+      </div>
 
-        function renderizarMenu() {
-            const menu = obterMenuConfig();
-            const nav = document.getElementById('menu-lateral');
-            nav.innerHTML = '';
+      <div id="tab-estoque" class="tab">
+        <div class="card">
+          <div class="card-header"><h2 class="card-title" id="estoque-form-title">Novo item de estoque</h2></div>
+          <form id="form-estoque" class="form-grid">
+            <input type="hidden" id="e-edit-id">
+            <div class="field span-6"><label>Item</label><input id="e-item" required maxlength="120"></div>
+            <div class="field"><label>Categoria</label><input id="e-cat" required maxlength="80"></div>
+            <div class="field"><label>Quantidade</label><input id="e-qtd" type="number" min="0" step="1" required></div>
+            <div class="field"><label>Preço unitário</label><input id="e-preco" type="number" min="0" step="0.01" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="e-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="e-submit">Adicionar item</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Item</th><th>Categoria</th><th>Quantidade</th><th>Preço</th><th>Ações</th></tr></thead><tbody id="tabela-estoque"></tbody></table></div></div>
+      </div>
 
-            menu.forEach((item, index) => {
-                if (!item.visivel && !menuEditando) return;
+      <div id="tab-financeiro" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="fin-form-title">Novo lançamento</h2><p class="card-help">Entradas de reservas e pedidos pagos aparecem automaticamente no caixa e não devem ser duplicadas.</p></div></div>
+          <form id="form-fin" class="form-grid">
+            <input type="hidden" id="f-edit-id">
+            <div class="field"><label>Tipo</label><select id="f-tipo"><option value="ENTRADA">Entrada</option><option value="SAIDA">Saída</option></select></div>
+            <div class="field span-6"><label>Descrição</label><input id="f-desc" required maxlength="200"></div>
+            <div class="field"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" required></div>
+            <div class="field"><label>Categoria</label><input id="f-cat" value="Geral" maxlength="80" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="f-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="f-submit">Lançar</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th>Origem</th><th>Ações</th></tr></thead><tbody id="tabela-financeiro"></tbody></table></div></div>
+      </div>
 
-                const a = document.createElement('a');
-                a.dataset.id = item.id;
-                if (item.id === abaAtual && item.visivel) a.classList.add('active');
-                if (!item.visivel) a.classList.add('oculto');
+      <div id="tab-relatorios" class="tab">
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Relatórios gerenciais</h2><p class="card-help">Indicadores calculados sobre receitas efetivamente pagas.</p></div><button class="btn btn-secondary" type="button" onclick="carregarRelatorios()">Atualizar</button></div><div class="metrics" id="relatorio-metricas"></div></div>
+      </div>
 
-                const icone = document.createElement('span');
-                icone.className = 'menu-icone';
-                icone.textContent = item.icone;
+      <div id="tab-integracoes" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Canais e localização</h2><p class="card-help">Links públicos do hotel, Google Maps e localização.</p></div></div>
+          <form id="form-integracoes" class="form-grid">
+            <div class="field span-6"><label>Booking.com</label><input id="int-booking" type="url" placeholder="https://www.booking.com/..."></div>
+            <div class="field span-6"><label>Airbnb</label><input id="int-airbnb" type="url" placeholder="https://www.airbnb.com/rooms/..."></div>
+            <div class="field span-6"><label>Expedia</label><input id="int-expedia" type="url"></div>
+            <div class="field span-6"><label>Hoteis.com</label><input id="int-hoteis" type="url"></div>
+            <div class="field span-6"><label>Site próprio</label><input id="int-site" type="url"></div>
+            <div class="field span-6"><label>Google Maps</label><input id="int-maps-url" type="url"></div>
+            <div class="field span-6"><label>Nome no Google Maps</label><input id="int-maps-nome" maxlength="200"></div>
+            <div class="field span-6"><label>Place ID</label><input id="int-place-id" maxlength="300"></div>
+            <div class="field span-12"><label>Endereço</label><input id="int-endereco" maxlength="500"></div>
+            <div class="field"><label>Latitude</label><input id="int-lat" type="number" step="any"></div>
+            <div class="field"><label>Longitude</label><input id="int-lng" type="number" step="any"></div>
+            <div class="form-actions"><button class="btn btn-secondary" type="button" onclick="pesquisarGoogleMaps()">Pesquisar Maps</button><button class="btn btn-primary" type="submit">Salvar integrações</button></div>
+          </form>
+          <div id="resultado-maps" style="margin-top:14px;"></div>
+          <div id="mapa-hotel" style="margin-top:14px;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Assinatura do hotel</h2><p class="card-help">Acesso é liberado pelo webhook do gateway, não pelo retorno do checkout.</p></div></div>
+          <div class="form-grid">
+            <div class="field span-6"><label>Plano</label><select id="saas-plano"></select></div>
+            <div class="field"><label>Status</label><input id="saas-status" readonly></div>
+            <div class="field"><label>Período final</label><input id="saas-fim" readonly></div>
+            <div class="form-actions"><button class="btn btn-primary" type="button" onclick="contratarPlano()">Abrir checkout recorrente</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Webhook de cobrança</h2><p class="card-help">Configure no Asaas a URL abaixo e o token de autenticação definido no servidor.</p></div></div>
+          <div class="field span-12"><label>URL do webhook</label><input id="int-webhook-url" readonly></div>
+        </div>
+      </div>
 
-                const nome = document.createElement('span');
-                nome.className = 'menu-nome';
-                nome.textContent = item.nome;
+      <div id="tab-whatsapp" class="tab">
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Mensagens WhatsApp</h2><p class="card-help">Abre a conversa no WhatsApp com a mensagem preparada.</p></div></div>
+          <div class="form-grid">
+            <div class="field"><label>Telefone</label><input id="wa-tel" placeholder="5561999999999"></div>
+            <div class="field span-6"><label>Modelo</label><select id="wa-template"><option value="Olá! Sua reserva está confirmada.">Confirmação de reserva</option><option value="Olá! Seu check-out está previsto para amanhã.">Lembrete de check-out</option><option value="Olá! Agradecemos pela estadia.">Pós-estadia</option></select></div>
+            <div class="field span-12"><label>Mensagem</label><textarea id="wa-msg"></textarea></div>
+            <div class="form-actions"><button class="btn btn-success" type="button" onclick="enviarWhatsApp()">Abrir WhatsApp</button></div>
+          </div>
+        </div>
+      </div>
 
-                const controles = document.createElement('div');
-                controles.className = 'menu-controls';
-                controles.appendChild(criarBotaoMenu('▲', 'Subir', index === 0, () => moverMenu(index, -1)));
-                controles.appendChild(criarBotaoMenu('▼', 'Descer', index === menu.length - 1, () => moverMenu(index, 1)));
-                controles.appendChild(criarBotaoMenu('✎', 'Renomear', false, () => renomearMenu(index)));
-                controles.appendChild(item.visivel
-                    ? criarBotaoMenu('✕', 'Ocultar', false, () => alternarVisibilidadeMenu(index))
-                    : criarBotaoMenu('＋', 'Mostrar', false, () => alternarVisibilidadeMenu(index)));
+      <div id="tab-plataforma" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Visão central dos hotéis, administradores, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
+          <div id="plataforma-aviso" class="notice info">Carregando clientes.</div>
+          <div class="table-wrap"><table><thead><tr><th>Hotel</th><th>Administrador(es)</th><th>Plano</th><th>Validade</th><th>Status</th><th>Controle</th></tr></thead><tbody id="tabela-plataforma"></tbody></table></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast-host" id="toast-host"></div>
+<script>
+const CONTEXTO_USUARIO = {{ contexto_usuario|tojson }};
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+const ORIGINAL_FETCH = window.fetch.bind(window);
+window.fetch = function(input, init = {}) {
+  const method=(init.method||'GET').toUpperCase();
+  if(['POST','PUT','PATCH','DELETE'].includes(method)){
+    const headers=new Headers(init.headers||{});
+    if(CSRF_TOKEN) headers.set('X-CSRFToken',CSRF_TOKEN);
+    init={...init,headers};
+  }
+  return ORIGINAL_FETCH(input,init);
+};
 
-                a.append(icone, nome, controles);
-                a.addEventListener('click', () => { if (item.visivel) switchTab(item.id); });
-                nav.appendChild(a);
-            });
-        }
+const state={quartos:[],hospedes:[],reservas:[],faixas:[],servicos:[],pedidos:[],ordens:[],usuarios:[],estoque:[],financeiro:[],planos:[],sub:null};
+let abaAtual=null;
+let historicoAbas=[];
+const primeiraAba=CONTEXTO_USUARIO.role==='platform_admin'?'plataforma':'painel';
 
-        function moverMenu(index, direcao) {
-            const menu = obterMenuConfig();
-            const novoIndex = index + direcao;
-            if (novoIndex < 0 || novoIndex >= menu.length) return;
-            [menu[index], menu[novoIndex]] = [menu[novoIndex], menu[index]];
-            salvarMenuConfig(menu);
-        }
+const menusTenant=[
+  ['painel','PD','Painel','reports.view'],
+  ['quartos','QT','Quartos','rooms.view'],
+  ['hospedes','HP','Hóspedes','guests.view'],
+  ['categorias','CP','Categorias de pessoas','categories.view'],
+  ['reservas','RS','Reservas','reservations.view'],
+  ['servicos','SV','Serviços e pedidos','services.view'],
+  ['ordens','OS','Ordens de serviço','orders.view'],
+  ['equipe','EQ','Equipe e acessos','team.view'],
+  ['estoque','ET','Estoque','stock.view'],
+  ['financeiro','FN','Financeiro','finance.view'],
+  ['relatorios','RL','Relatórios','reports.view'],
+  ['integracoes','IN','Integrações','integrations.view'],
+  ['whatsapp','WA','WhatsApp','whatsapp.use']
+];
+const rolePerms={
+  admin:new Set(['*']),
+  gerente:new Set(['rooms.view','guests.view','categories.view','reservations.view','services.view','orders.view','team.view','stock.view','finance.view','reports.view','integrations.view','whatsapp.use']),
+  recepcao:new Set(['rooms.view','guests.view','reservations.view','services.view','orders.view','whatsapp.use']),
+  limpeza:new Set(['rooms.view','services.view','orders.view']),
+  manutencao:new Set(['rooms.view','orders.view']),
+  financeiro:new Set(['rooms.view','guests.view','reservations.view','finance.view','reports.view'])
+};
+function pode(p){const s=rolePerms[CONTEXTO_USUARIO.role];return s&& (s.has('*')||s.has(p));}
+function menuPermitido(id,p){return CONTEXTO_USUARIO.role==='admin'||pode(p)||id==='painel';}
+function toast(msg,type=''){const host=document.getElementById('toast-host');const el=document.createElement('div');el.className='toast '+(type||'');el.textContent=msg;host.appendChild(el);setTimeout(()=>el.remove(),3500);}
+function escapar(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML;}
+function moeda(v){return 'R$ '+Number(v||0).toFixed(2).replace('.',',');}
+function dataHora(v){if(!v)return '-';try{return new Date(v).toLocaleString('pt-BR');}catch(e){return v;}}
+function badgeStatus(s){
+  const x=String(s||'').toUpperCase();
+  let cl='badge-neutral';
+  if(['PAGO','ATIVA','CONCLUIDA','ENTREGUE','DISPONIVEL','ATIVO'].includes(x))cl='badge-ok';
+  else if(['PENDENTE','TESTE','ABERTO','EM_PREPARO','EM_ANDAMENTO','RESERVADO'].includes(x))cl='badge-pending';
+  else if(['SUSPENSA','CANCELADA','CANCELADO','BLOQUEADO','MANUTENCAO'].includes(x))cl='badge-danger';
+  return '<span class="badge '+cl+'">'+escapar(x)+'</span>';
+}
+async function jsonFetch(url,opts={}){
+  const res=await fetch(url,opts);
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){
+    if(res.status===401){window.location.href='/login';return null;}
+    throw new Error(data.erro||data.mensagem||'Não foi possível concluir a operação.');
+  }
+  return data;
+}
+function renderNav(){
+  const nav=document.getElementById('nav');nav.innerHTML='';
+  const menu=CONTEXTO_USUARIO.role==='platform_admin'?[['plataforma','SA','Administração SaaS','platform']]:menusTenant.filter(x=>menuPermitido(x[0],x[3]));
+  menu.forEach(item=>{
+    const b=document.createElement('button');b.type='button';b.className='nav-btn';b.dataset.tab=item[0];
+    b.innerHTML='<span class="nav-code">'+item[1]+'</span><span>'+escapar(item[2])+'</span>';
+    b.addEventListener('click',()=>switchTab(item[0]));
+    nav.appendChild(b);
+  });
+}
+function tituloAba(tab){
+  if(tab==='plataforma')return 'Administração do SaaS';
+  const m=menusTenant.find(x=>x[0]===tab);return m?m[2]:'Painel';
+}
+function switchTab(tab,registrar=true){
+  const target=document.getElementById('tab-'+tab);
+  if(!target)return;
+  if(CONTEXTO_USUARIO.role!=='platform_admin' && tab!=='painel'){
+    const m=menusTenant.find(x=>x[0]===tab);
+    if(m&&!menuPermitido(m[0],m[3])){toast('Seu perfil não possui acesso a esta área.','error');return;}
+  }
+  if(registrar&&abaAtual&&abaAtual!==tab)historicoAbas.push(abaAtual);
+  abaAtual=tab;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  target.classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
+  document.getElementById('page-title').textContent=tituloAba(tab);
+  const hotel=CONTEXTO_USUARIO.hotel_nome;
+  document.getElementById('page-subtitle').textContent=CONTEXTO_USUARIO.role==='platform_admin'?'Controle de clientes e assinaturas':(hotel||'Gestão operacional');
+  document.getElementById('user-name').textContent=CONTEXTO_USUARIO.nome;
+  document.getElementById('user-role').textContent=CONTEXTO_USUARIO.role_label;
+  document.getElementById('hotel-name').textContent=hotel||'Sem hotel vinculado';
+  loadTab(tab).catch(e=>toast(e.message,'error'));
+}
+function voltar(){
+  if(historicoAbas.length){const x=historicoAbas.pop();switchTab(x,false);}
+  else if(abaAtual!==primeiraAba){switchTab(primeiraAba,false);}
+}
+document.getElementById('btn-back-top').onclick=voltar;
+document.getElementById('btn-back-side').onclick=voltar;
 
-        function alternarVisibilidadeMenu(index) {
-            const menu = obterMenuConfig();
-            menu[index].visivel = !menu[index].visivel;
-            salvarMenuConfig(menu);
-        }
+function popularSelect(elId,rows,placeholder,labelFn,valueFn){
+  const el=document.getElementById(elId);if(!el)return;
+  const atual=el.value;el.innerHTML='';
+  if(placeholder!==null){const o=document.createElement('option');o.value='';o.textContent=placeholder;el.appendChild(o);}
+  rows.forEach(r=>{const o=document.createElement('option');o.value=valueFn(r);o.textContent=labelFn(r);el.appendChild(o);});
+  if([...el.options].some(x=>x.value===atual))el.value=atual;
+}
+async function carregarBase(){
+  const [q,h]=await Promise.all([jsonFetch('/api/quartos'),jsonFetch('/api/hospedes')]);
+  state.quartos=q||[];state.hospedes=h||[];
+  popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
+  popularSelect('p-quarto',state.quartos,null,x=>x.numero+' — '+x.tipo,x=>x.id);
+  popularSelect('os-quarto',state.quartos,null,x=>x.numero+' — '+x.tipo,x=>x.id);
+  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);
+  popularSelect('p-hospede',state.hospedes,'Selecionar hóspede',x=>x.nome,x=>x.id);
+  popularSelect('os-hospede',state.hospedes,'Sem hóspede específico',x=>x.nome,x=>x.id);
+}
+function preencherFaixas(){
+  const box=document.getElementById('container-faixas-reserva');box.innerHTML='';
+  state.faixas.forEach(f=>{
+    const div=document.createElement('div');div.className='field';
+    div.innerHTML='<label>'+escapar(f.nome)+' — +'+moeda(f.valor_adicional)+'/dia</label><input class="faixa-input" data-id="'+f.id+'" type="number" min="0" step="1" value="0">';
+    box.appendChild(div);
+  });
+}
+async function carregarQuartos(){
+  state.quartos=await jsonFetch('/api/quartos')||[];
+  const tbody=document.getElementById('tabela-quartos');tbody.innerHTML='';
+  state.quartos.forEach(q=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td><strong>'+escapar(q.numero)+'</strong></td><td>'+escapar(q.tipo)+'</td><td>'+moeda(q.preco_diaria)+'</td><td>'+badgeStatus(q.status)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarQuarto('+q.id+')">Editar</button><button class="btn btn-danger" onclick="deletarQuarto('+q.id+')">Excluir</button></div></td>';
+    tbody.appendChild(tr);
+  });
+  document.getElementById('contagem-quartos').textContent='('+state.quartos.length+')';
+  atualizarPreviaLote();
+}
+function calcularLote(qtd,inicial,porAndar){
+  const arr=[];
+  if(porAndar>0){let andar=Math.floor(inicial/100),pos=inicial%100;for(let i=0;i<qtd;i++){arr.push(String(andar*100+pos));pos++;if(pos>porAndar){andar++;pos=1;}}}
+  else{for(let i=0;i<qtd;i++)arr.push(String(inicial+i));}
+  return arr;
+}
+function atualizarPreviaLote(){
+  const el=document.getElementById('lote-previa');if(!el)return;
+  const qtd=parseInt(document.getElementById('lote-qtd').value||'0',10),ini=parseInt(document.getElementById('lote-inicial').value||'0',10),pa=parseInt(document.getElementById('lote-por-andar').value||'0',10);
+  if(!(qtd>=1&&qtd<=500&&ini>=1&&pa>=0&&pa<=99)){el.className='notice danger';el.textContent='Informe uma quantidade e uma numeração válidas.';return;}
+  if(pa>0&&(ini%100<1||ini%100>pa)){el.className='notice warning';el.textContent='O primeiro número deve estar dentro da quantidade informada para o andar.';return;}
+  const nums=calcularLote(qtd,ini,pa);el.className='notice info';el.textContent='Serão criados '+nums.length+' quartos, do '+nums[0]+' ao '+nums[nums.length-1]+'.';
+}
+function limparQuartoForm(){document.getElementById('form-quarto').reset();document.getElementById('q-edit-id').value='';document.getElementById('q-status').value='DISPONIVEL';document.getElementById('q-cancel').classList.add('hidden');document.getElementById('q-submit').textContent='Cadastrar quarto';document.getElementById('quarto-form-title').textContent='Novo quarto';}
+async function editarQuarto(id){const q=state.quartos.find(x=>x.id===id);if(!q)return;switchTab('quartos');document.getElementById('q-edit-id').value=q.id;document.getElementById('q-numero').value=q.numero;document.getElementById('q-tipo').value=q.tipo;document.getElementById('q-preco').value=q.preco_diaria;document.getElementById('q-status').value=q.status;document.getElementById('q-cancel').classList.remove('hidden');document.getElementById('q-submit').textContent='Salvar alterações';document.getElementById('quarto-form-title').textContent='Editar quarto '+q.numero;}
+async function deletarQuarto(id){if(!confirm('Excluir este quarto? O sistema não permitirá excluir quarto com reserva ativa ou futura.'))return;try{await jsonFetch('/api/quartos/'+id,{method:'DELETE'});toast('Quarto excluído.','success');carregarQuartos();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-quarto').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('q-edit-id').value;const body={numero:document.getElementById('q-numero').value,tipo:document.getElementById('q-tipo').value,preco_diaria:parseFloat(document.getElementById('q-preco').value),status:document.getElementById('q-status').value};try{await jsonFetch(id?'/api/quartos/'+id:'/api/quartos',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Quarto atualizado.':'Quarto cadastrado.','success');limparQuartoForm();carregarQuartos();}catch(e){toast(e.message,'error');}});
+document.getElementById('q-cancel').onclick=limparQuartoForm;
+document.getElementById('form-lote').addEventListener('submit',async e=>{e.preventDefault();const qtd=parseInt(document.getElementById('lote-qtd').value,10),ini=parseInt(document.getElementById('lote-inicial').value,10),pa=parseInt(document.getElementById('lote-por-andar').value||'0',10),preco=parseFloat(document.getElementById('lote-preco').value);const nums=calcularLote(qtd,ini,pa);if(!confirm('Criar '+nums.length+' quartos?'))return;try{const data=await jsonFetch('/api/quartos/lote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({quantidade:qtd,numero_inicial:ini,por_andar:pa,tipo:document.getElementById('lote-tipo').value,preco_diaria:preco})});toast(data.mensagem,'success');carregarQuartos();}catch(e){toast(e.message,'error');}});
+['lote-qtd','lote-inicial','lote-por-andar'].forEach(id=>document.getElementById(id).addEventListener('input',atualizarPreviaLote));
 
-        function renomearMenu(index) {
-            const menu = obterMenuConfig();
-            const novo = prompt('Novo nome para este item do menu:', menu[index].nome);
-            if (novo === null) return;
-            const limpo = novo.trim();
-            if (!limpo) return;
-            menu[index].nome = limpo.slice(0, 40);
-            salvarMenuConfig(menu);
-            atualizarTituloPagina();
-        }
+async function carregarHospedes(){
+  state.hospedes=await jsonFetch('/api/hospedes')||[];
+  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);popularSelect('p-hospede',state.hospedes,'Selecionar hóspede',x=>x.nome,x=>x.id);popularSelect('os-hospede',state.hospedes,'Sem hóspede específico',x=>x.nome,x=>x.id);
+  const tbody=document.getElementById('tabela-hospedes');tbody.innerHTML='';
+  state.hospedes.forEach(h=>{const tr=document.createElement('tr');tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong></td><td>'+escapar(h.documento||'-')+'</td><td>'+escapar(h.telefone||'-')+'</td><td>'+escapar(h.email||'-')+'</td><td><button class="btn btn-secondary" onclick="editarHospede('+h.id+')">Editar</button></td>';tbody.appendChild(tr);});
+}
+function limparHospedeForm(){document.getElementById('form-hospede').reset();document.getElementById('h-edit-id').value='';document.getElementById('h-cancel').classList.add('hidden');document.getElementById('h-submit').textContent='Salvar hóspede';document.getElementById('hospede-form-title').textContent='Novo hóspede';}
+function editarHospede(id){const h=state.hospedes.find(x=>x.id===id);if(!h)return;switchTab('hospedes');document.getElementById('h-edit-id').value=id;document.getElementById('h-nome').value=h.nome;document.getElementById('h-doc').value=h.documento||'';document.getElementById('h-tel').value=h.telefone||'';document.getElementById('h-email').value=h.email||'';document.getElementById('h-obs').value=h.observacoes||'';document.getElementById('h-cancel').classList.remove('hidden');document.getElementById('h-submit').textContent='Salvar alterações';document.getElementById('hospede-form-title').textContent='Editar hóspede';}
+document.getElementById('form-hospede').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('h-edit-id').value;const body={nome:document.getElementById('h-nome').value,documento:document.getElementById('h-doc').value,telefone:document.getElementById('h-tel').value,email:document.getElementById('h-email').value,observacoes:document.getElementById('h-obs').value};try{await jsonFetch(id?'/api/hospedes/'+id:'/api/hospedes',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Hóspede atualizado.':'Hóspede cadastrado.','success');limparHospedeForm();carregarHospedes();}catch(e){toast(e.message,'error');}});
+document.getElementById('h-cancel').onclick=limparHospedeForm;
 
-        function alternarEdicaoMenu() {
-            menuEditando = !menuEditando;
-            document.getElementById('sidebar').classList.toggle('editando', menuEditando);
-            document.getElementById('btn-editar-menu').textContent = menuEditando ? '✔ Concluir edição' : '✏️ Editar menu';
-            document.getElementById('btn-restaurar-menu').style.display = menuEditando ? 'block' : 'none';
-            renderizarMenu();
-        }
+async function carregarCategorias(){state.faixas=await jsonFetch('/api/faixas_etarias')||[];preencherFaixas();const tb=document.getElementById('tabela-categorias');tb.innerHTML='';state.faixas.forEach(f=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(f.nome)+'</td><td>'+f.idade_min+' a '+f.idade_max+'</td><td>'+moeda(f.valor_adicional)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarCategoria('+f.id+')">Editar</button><button class="btn btn-danger" onclick="excluirCategoria('+f.id+')">Excluir</button></div></td>';tb.appendChild(tr);});}
+function limparCategoriaForm(){document.getElementById('form-cat').reset();document.getElementById('cat-edit-id').value='';document.getElementById('cat-adicional').value='0';document.getElementById('cat-cancel').classList.add('hidden');document.getElementById('cat-submit').textContent='Salvar categoria';document.getElementById('cat-form-title').textContent='Nova categoria de pessoa';}
+function editarCategoria(id){const f=state.faixas.find(x=>x.id===id);if(!f)return;switchTab('categorias');document.getElementById('cat-edit-id').value=id;document.getElementById('cat-nome').value=f.nome;document.getElementById('cat-min').value=f.idade_min;document.getElementById('cat-max').value=f.idade_max;document.getElementById('cat-adicional').value=f.valor_adicional;document.getElementById('cat-cancel').classList.remove('hidden');document.getElementById('cat-submit').textContent='Salvar alterações';document.getElementById('cat-form-title').textContent='Editar categoria';}
+async function excluirCategoria(id){if(!confirm('Excluir esta categoria?'))return;try{await jsonFetch('/api/faixas_etarias/'+id,{method:'DELETE'});toast('Categoria removida.','success');carregarCategorias();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-cat').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('cat-edit-id').value;const body={nome:document.getElementById('cat-nome').value,idade_min:parseInt(document.getElementById('cat-min').value,10),idade_max:parseInt(document.getElementById('cat-max').value,10),valor_adicional:parseFloat(document.getElementById('cat-adicional').value)};try{await jsonFetch(id?'/api/faixas_etarias/'+id:'/api/faixas_etarias',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Categoria atualizada.':'Categoria salva.','success');limparCategoriaForm();carregarCategorias();}catch(e){toast(e.message,'error');}});
+document.getElementById('cat-cancel').onclick=limparCategoriaForm;
 
-        function restaurarMenuPadrao() {
-            if (!confirm('Restaurar o menu para a ordem e os nomes originais?')) return;
-            localStorage.removeItem(MENU_KEY);
-            localStorage.removeItem('hotel_master_menu');
-            switchTab('quartos');
-        }
+async function carregarReservas(){
+  const [rows,quartos,hospedes,faixas]=await Promise.all([jsonFetch('/api/reservas'),jsonFetch('/api/quartos'),jsonFetch('/api/hospedes'),jsonFetch('/api/faixas_etarias')]);
+  state.reservas=rows||[];state.quartos=quartos||[];state.hospedes=hospedes||[];state.faixas=faixas||[];
+  popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
+  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);preencherFaixas();
+  const tb=document.getElementById('tabela-reservas');tb.innerHTML='';
+  if(!state.reservas.length){tb.innerHTML='<tr><td colspan="8" class="empty">Nenhuma reserva cadastrada.</td></tr>';return;}
+  state.reservas.forEach(r=>{const tr=document.createElement('tr');const pagado=String(r.status_pagamento).toUpperCase()==='PAGO';const cancelada=String(r.status).toUpperCase()==='CANCELADA';tr.innerHTML='<td>'+r.id+'</td><td>'+escapar(r.hospede_nome||'Não informado')+'</td><td><strong>'+escapar(r.quarto_numero)+'</strong></td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+r.diarias+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(r.status_pagamento)+'</td><td><div class="row-actions">'+(!cancelada?'<button class="btn btn-secondary" onclick="editarReserva('+r.id+')">Editar</button>':'')+(!cancelada?'<button class="btn '+(pagado?'btn-warning':'btn-success')+'" onclick="alterarPagamentoReserva('+r.id+','+(pagado?'false':'true')+')">'+(pagado?'Não pago':'Pagou')+'</button>':'')+(!cancelada?'<button class="btn btn-danger" onclick="cancelarReserva('+r.id+')">Cancelar</button>':'')+'</div></td>';tb.appendChild(tr);});
+}
+function limparReservaForm(){document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();}
+function editarReserva(id){const r=state.reservas.find(x=>x.id===id);if(!r)return;switchTab('reservas');document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id;document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;}
+async function alterarPagamentoReserva(id,pago){const forma=pago?(prompt('Forma de pagamento (PIX, cartão, dinheiro etc.):','PIX')||'Não informado'):'Não informado';if(pago&&!confirm('Confirmar que a reserva foi paga e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar a reserva como não paga e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/reservas/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:forma})});toast('Pagamento da reserva atualizado.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
+async function cancelarReserva(id){if(!confirm('Cancelar esta reserva? O pagamento automático, se houver, será retirado do caixa.'))return;try{await jsonFetch('/api/reservas/'+id+'/cancelar',{method:'PUT'});toast('Reserva cancelada.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-reserva').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('r-edit-id').value;const comps=[...document.querySelectorAll('.faixa-input')].map(x=>({faixa_id:parseInt(x.dataset.id,10),quantidade:parseInt(x.value||'0',10)}));const body={hospede_id:parseInt(document.getElementById('r-hospede-id').value,10),quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,composicao:comps};try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();carregarReservas();}catch(e){toast(e.message,'error');}});
+document.getElementById('r-cancel').onclick=limparReservaForm;
 
-        function atualizarTituloPagina() {
-            const item = obterMenuConfig().find(i => i.id === abaAtual);
-            document.getElementById('page-title').innerText = item ? item.nome : 'Painel';
-        }
+async function carregarServicos(){
+  state.servicos=await jsonFetch('/api/servicos')||[];
+  const tb=document.getElementById('tabela-servicos');tb.innerHTML='';
+  state.servicos.forEach(s=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(s.nome)+'</td><td>'+escapar(s.categoria)+'</td><td>'+moeda(s.preco)+'</td><td>'+escapar(s.unidade)+'</td><td>'+badgeStatus(s.ativo?'ATIVO':'BLOQUEADO')+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarServico('+s.id+')">Editar</button><button class="btn btn-danger" onclick="desativarServico('+s.id+')">Desativar</button></div></td>';tb.appendChild(tr);});
+  popularSelect('p-servico',state.servicos.filter(x=>x.ativo),'Selecionar serviço',x=>x.nome+' — '+moeda(x.preco),x=>x.id);
+}
+function limparServicoForm(){document.getElementById('form-servico').reset();document.getElementById('s-edit-id').value='';document.getElementById('s-categoria').value='Diversos';document.getElementById('s-unidade').value='unidade';document.getElementById('s-cancel').classList.add('hidden');document.getElementById('s-submit').textContent='Salvar serviço';document.getElementById('servico-form-title').textContent='Novo serviço';}
+function editarServico(id){const s=state.servicos.find(x=>x.id===id);if(!s)return;switchTab('servicos');document.getElementById('s-edit-id').value=id;document.getElementById('s-nome').value=s.nome;document.getElementById('s-categoria').value=s.categoria;document.getElementById('s-unidade').value=s.unidade;document.getElementById('s-preco').value=s.preco;document.getElementById('s-cancel').classList.remove('hidden');document.getElementById('s-submit').textContent='Salvar alterações';document.getElementById('servico-form-title').textContent='Editar serviço';}
+async function desativarServico(id){if(!confirm('Desativar este serviço? Pedidos antigos continuam registrados.'))return;try{await jsonFetch('/api/servicos/'+id,{method:'DELETE'});toast('Serviço desativado.','success');carregarServicos();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-servico').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('s-edit-id').value;const body={nome:document.getElementById('s-nome').value,categoria:document.getElementById('s-categoria').value,unidade:document.getElementById('s-unidade').value,preco:parseFloat(document.getElementById('s-preco').value),ativo:1};try{await jsonFetch(id?'/api/servicos/'+id:'/api/servicos',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Serviço atualizado.':'Serviço criado.','success');limparServicoForm();carregarServicos();}catch(e){toast(e.message,'error');}});
+document.getElementById('s-cancel').onclick=limparServicoForm;
+document.getElementById('p-servico').addEventListener('change',()=>{const s=state.servicos.find(x=>String(x.id)===document.getElementById('p-servico').value);if(s){document.getElementById('p-item').value=s.nome;document.getElementById('p-preco').value=s.preco;}});
+async function carregarPedidos(){state.pedidos=await jsonFetch('/api/pedidos')||[];const tb=document.getElementById('tabela-pedidos');tb.innerHTML='';if(!state.pedidos.length){tb.innerHTML='<tr><td colspan="9" class="empty">Nenhum pedido lançado.</td></tr>';return;}state.pedidos.forEach(p=>{const pago=String(p.status_pagamento)==='PAGO';const cancel=String(p.status)==='CANCELADO';const total=Number(p.quantidade||0)*Number(p.preco_unitario||0);const tr=document.createElement('tr');tr.innerHTML='<td>'+dataHora(p.solicitado_em)+'</td><td>'+escapar(p.quarto_numero||'-')+'</td><td>'+escapar(p.hospede_nome||'-')+'</td><td>'+escapar(p.item)+'</td><td>'+p.quantidade+'</td><td>'+moeda(total)+'</td><td>'+badgeStatus(p.status)+'</td><td>'+badgeStatus(p.status_pagamento)+'</td><td><div class="row-actions">'+(!cancel?'<button class="btn btn-secondary" onclick="alterarStatusPedido('+p.id+')">Status</button>':'')+(!cancel?'<button class="btn '+(pago?'btn-warning':'btn-success')+'" onclick="alterarPagamentoPedido('+p.id+','+(pago?'false':'true')+')">'+(pago?'Não pago':'Pagou')+'</button>':'')+'</div></td>';tb.appendChild(tr);});}
+async function alterarStatusPedido(id){const status=prompt('Novo status: ABERTO, EM_PREPARO, ENTREGUE ou CANCELADO','ENTREGUE');if(!status)return;try{await jsonFetch('/api/pedidos/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})});toast('Status do pedido atualizado.','success');carregarPedidos();}catch(e){toast(e.message,'error');}}
+async function alterarPagamentoPedido(id,pago){if(pago&&!confirm('Confirmar pagamento e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar como não pago e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/pedidos/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:pago?(prompt('Forma de pagamento:','PIX')||'Não informado'):'Não informado'})});toast('Pagamento do pedido atualizado.','success');carregarPedidos();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-pedido').addEventListener('submit',async e=>{e.preventDefault();const body={quarto_id:parseInt(document.getElementById('p-quarto').value,10),hospede_id:document.getElementById('p-hospede').value||null,servico_id:document.getElementById('p-servico').value||null,item:document.getElementById('p-item').value,quantidade:parseFloat(document.getElementById('p-qtd').value),preco_unitario:parseFloat(document.getElementById('p-preco').value),descricao:document.getElementById('p-desc').value};try{const d=await jsonFetch('/api/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Pedido lançado. Total '+moeda(d.total),'success');document.getElementById('form-pedido').reset();document.getElementById('p-qtd').value=1;document.getElementById('p-preco').value=0;carregarPedidos();}catch(e){toast(e.message,'error');}});
 
-        function switchTab(tabName) {
-            abaAtual = tabName;
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            const aba = document.getElementById('tab-' + tabName);
-            if (aba) aba.classList.add('active');
-            atualizarTituloPagina();
-            renderizarMenu(); 
+async function carregarOrdens(){state.ordens=await jsonFetch('/api/ordens')||[];const tb=document.getElementById('tabela-os');tb.innerHTML='';if(!state.ordens.length){tb.innerHTML='<tr><td colspan="8" class="empty">Nenhuma ordem de serviço.</td></tr>';return;}state.ordens.forEach(o=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+o.id+'</td><td><strong>'+escapar(o.quarto)+'</strong></td><td>'+escapar(o.hospede_nome||'-')+'</td><td>'+escapar(o.tipo)+'</td><td>'+badgeStatus(o.prioridade)+'</td><td>'+escapar(o.responsavel_nome||'A definir')+'</td><td>'+badgeStatus(o.status)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarOrdem('+o.id+')">Editar</button><button class="btn btn-primary" onclick="avancarOrdem('+o.id+')">Status</button><button class="btn btn-danger" onclick="excluirOrdem('+o.id+')">Excluir</button></div></td>';tb.appendChild(tr);});
+  await carregarUsuariosParaOS();
+}
+async function carregarUsuariosParaOS(){if(CONTEXTO_USUARIO.role==='platform_admin')return;try{const rows=await jsonFetch('/api/usuarios');state.usuarios=rows||[];popularSelect('os-responsavel',state.usuarios.filter(x=>x.ativo),'A definir',x=>x.nome+' — '+x.role_label,x=>x.id);}catch(e){state.usuarios=[];}}
+function limparOsForm(){document.getElementById('form-os').reset();document.getElementById('os-edit-id').value='';document.getElementById('os-cancel').classList.add('hidden');document.getElementById('os-submit').textContent='Criar OS';document.getElementById('os-form-title').textContent='Nova ordem de serviço';}
+function editarOrdem(id){const o=state.ordens.find(x=>x.id===id);if(!o)return;switchTab('ordens');document.getElementById('os-edit-id').value=id;document.getElementById('os-quarto').value=o.quarto_id;document.getElementById('os-hospede').value=o.hospede_id||'';document.getElementById('os-tipo').value=o.tipo;document.getElementById('os-prioridade').value=o.prioridade;document.getElementById('os-responsavel').value=o.responsavel_id||'';document.getElementById('os-desc').value=o.descricao;document.getElementById('os-cancel').classList.remove('hidden');document.getElementById('os-submit').textContent='Salvar alterações';document.getElementById('os-form-title').textContent='Editar OS #'+id;}
+async function avancarOrdem(id){const s=prompt('Novo status: PENDENTE, EM_ANDAMENTO, CONCLUIDA ou CANCELADA','CONCLUIDA');if(!s)return;try{await jsonFetch('/api/ordens/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})});toast('Status da OS atualizado.','success');carregarOrdens();}catch(e){toast(e.message,'error');}}
+async function excluirOrdem(id){if(!confirm('Excluir esta OS?'))return;try{await jsonFetch('/api/ordens/'+id,{method:'DELETE'});toast('OS removida.','success');carregarOrdens();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-os').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('os-edit-id').value;const body={quarto_id:parseInt(document.getElementById('os-quarto').value,10),hospede_id:document.getElementById('os-hospede').value||null,tipo:document.getElementById('os-tipo').value,prioridade:document.getElementById('os-prioridade').value,responsavel_id:document.getElementById('os-responsavel').value||null,descricao:document.getElementById('os-desc').value};try{await jsonFetch(id?'/api/ordens/'+id:'/api/ordens',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'OS atualizada.':'OS criada.','success');limparOsForm();carregarOrdens();}catch(e){toast(e.message,'error');}});
+document.getElementById('os-cancel').onclick=limparOsForm;
 
-            if(tabName === 'quartos') carregarQuartos();
-            if(tabName === 'hospedes') carregarHospedes();
-            if(tabName === 'faixas') carregarFaixas();
-            if(tabName === 'reservas') { carregarFaixasParaReserva(); carregarReservas(); }
-            if(tabName === 'estoque') carregarEstoque();
-            if(tabName === 'financeiro') carregarFinanceiro();
-            if(tabName === 'ordens') carregarOrdens();
-            if(tabName === 'relatorios') carregarRelatorios();
-            if(tabName === 'whatsapp') preencherTemplateWhatsApp();
-            if(tabName === 'integracoes') { carregarIntegracoes(); carregarPlanosSaaS(); }
-        }
+async function carregarEquipe(){if(CONTEXTO_USUARIO.role!=='admin')return;state.usuarios=await jsonFetch('/api/usuarios')||[];const tb=document.getElementById('tabela-equipe');tb.innerHTML='';state.usuarios.forEach(u=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(u.nome||u.username)+'</td><td>'+escapar(u.username)+'</td><td>'+escapar(u.role_label)+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(u.ativo?'ATIVO':'BLOQUEADO')+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarUsuario('+u.id+')">Editar</button>'+(u.ativo?'<button class="btn btn-danger" onclick="bloquearUsuario('+u.id+')">Bloquear</button>':'')+'</div></td>';tb.appendChild(tr);});}
+function limparUsuarioForm(){document.getElementById('form-user').reset();document.getElementById('u-edit-id').value='';document.getElementById('u-username').disabled=false;document.getElementById('u-password').required=true;document.getElementById('u-ativo').value='1';document.getElementById('u-cancel').classList.add('hidden');document.getElementById('u-submit').textContent='Criar acesso';document.getElementById('user-form-title').textContent='Novo acesso';}
+function editarUsuario(id){const u=state.usuarios.find(x=>x.id===id);if(!u)return;switchTab('equipe');document.getElementById('u-edit-id').value=id;document.getElementById('u-nome').value=u.nome||'';document.getElementById('u-username').value=u.username;document.getElementById('u-username').disabled=true;document.getElementById('u-role').value=u.role;document.getElementById('u-email').value=u.email||'';document.getElementById('u-password').value='';document.getElementById('u-password').required=false;document.getElementById('u-ativo').value=u.ativo?'1':'0';document.getElementById('u-cancel').classList.remove('hidden');document.getElementById('u-submit').textContent='Salvar alterações';document.getElementById('user-form-title').textContent='Editar acesso';}
+async function bloquearUsuario(id){if(!confirm('Bloquear este acesso?'))return;try{await jsonFetch('/api/usuarios/'+id,{method:'DELETE'});toast('Usuário bloqueado.','success');carregarEquipe();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-user').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('u-edit-id').value;const body={nome:document.getElementById('u-nome').value,username:document.getElementById('u-username').value,role:document.getElementById('u-role').value,email:document.getElementById('u-email').value,ativo:document.getElementById('u-ativo').value==='1',password:document.getElementById('u-password').value};try{await jsonFetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Acesso atualizado.':'Acesso criado.','success');limparUsuarioForm();carregarEquipe();}catch(e){toast(e.message,'error');}});
+document.getElementById('u-cancel').onclick=limparUsuarioForm;
 
-        function escaparHtml(valor) {
-            const d = document.createElement('div');
-            d.textContent = valor == null ? '' : String(valor);
-            return d.innerHTML;
-        }
+async function carregarEstoque(){state.estoque=await jsonFetch('/api/estoque')||[];const tb=document.getElementById('tabela-estoque');tb.innerHTML='';state.estoque.forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(x.item)+'</td><td>'+escapar(x.categoria)+'</td><td>'+x.quantidade+'</td><td>'+moeda(x.preco_unitario)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarEstoque('+x.id+')">Editar</button><button class="btn btn-danger" onclick="excluirEstoque('+x.id+')">Excluir</button></div></td>';tb.appendChild(tr);});}
+function limparEstoqueForm(){document.getElementById('form-estoque').reset();document.getElementById('e-edit-id').value='';document.getElementById('e-cancel').classList.add('hidden');document.getElementById('e-submit').textContent='Adicionar item';document.getElementById('estoque-form-title').textContent='Novo item de estoque';}
+function editarEstoque(id){const x=state.estoque.find(s=>s.id===id);if(!x)return;switchTab('estoque');document.getElementById('e-edit-id').value=id;document.getElementById('e-item').value=x.item;document.getElementById('e-cat').value=x.categoria;document.getElementById('e-qtd').value=x.quantidade;document.getElementById('e-preco').value=x.preco_unitario;document.getElementById('e-cancel').classList.remove('hidden');document.getElementById('e-submit').textContent='Salvar alterações';document.getElementById('estoque-form-title').textContent='Editar item';}
+async function excluirEstoque(id){if(!confirm('Excluir este item?'))return;try{await jsonFetch('/api/estoque/'+id,{method:'DELETE'});toast('Item removido.','success');carregarEstoque();}catch(e){toast(e.message,'error');}}
+document.getElementById('form-estoque').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('e-edit-id').value;const body={item:document.getElementById('e-item').value,categoria:document.getElementById('e-cat').value,quantidade:parseInt(document.getElementById('e-qtd').value,10),preco_unitario:parseFloat(document.getElementById('e-preco').value)};try{await jsonFetch(id?'/api/estoque/'+id:'/api/estoque',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Estoque atualizado.':'Item adicionado.','success');limparEstoqueForm();carregarEstoque();}catch(e){toast(e.message,'error');}});
+document.getElementById('e-cancel').onclick=limparEstoqueForm;
 
-        async function carregarQuartos() {
-            const res = await fetch('/api/quartos');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-quartos');
-            tbody.innerHTML = '';
-            
-            data.forEach(q => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><b>${escaparHtml(q.numero)}</b></td>
-                    <td>${escaparHtml(q.tipo)}</td>
-                    <td>R$ ${q.preco_diaria.toFixed(2)}</td>
-                    <td><span class="badge ${q.status.toLowerCase()}">${escaparHtml(q.status)}</span></td>
-                    <td><button class="btn btn-danger" onclick="deletarQuarto('${escaparHtml(q.numero)}')">Excluir</button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-            
-            const contagem = document.getElementById('contagem-quartos');
-            if (contagem) contagem.textContent = '(' + data.length + ')';
-            atualizarPrevisaoLote();
-        }
+async function carregarFinanceiro(){state.financeiro=await jsonFetch('/api/financeiro')||[];const tb=document.getElementById('tabela-financeiro');tb.innerHTML='';state.financeiro.forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(x.data)+'</td><td>'+badgeStatus(x.tipo)+'</td><td>'+escapar(x.descricao)+'</td><td>'+escapar(x.categoria)+'</td><td>'+moeda(x.valor)+'</td><td>'+escapar(x.origem_tipo||'Manual')+'</td><td>'+(x.origem_tipo?'Automático':'<button class="btn btn-secondary" onclick="editarFinanceiro('+x.id+')">Editar</button>')+'</td>';tb.appendChild(tr);});}
+function limparFinanceiroForm(){document.getElementById('form-fin').reset();document.getElementById('f-edit-id').value='';document.getElementById('f-cat').value='Geral';document.getElementById('f-cancel').classList.add('hidden');document.getElementById('f-submit').textContent='Lançar';document.getElementById('fin-form-title').textContent='Novo lançamento';}
+function editarFinanceiro(id){const x=state.financeiro.find(s=>s.id===id);if(!x||x.origem_tipo)return;switchTab('financeiro');document.getElementById('f-edit-id').value=id;document.getElementById('f-tipo').value=x.tipo;document.getElementById('f-desc').value=x.descricao;document.getElementById('f-valor').value=x.valor;document.getElementById('f-cat').value=x.categoria;document.getElementById('f-cancel').classList.remove('hidden');document.getElementById('f-submit').textContent='Salvar alterações';document.getElementById('fin-form-title').textContent='Editar lançamento';}
+document.getElementById('form-fin').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('f-edit-id').value;const body={tipo:document.getElementById('f-tipo').value,descricao:document.getElementById('f-desc').value,valor:parseFloat(document.getElementById('f-valor').value),categoria:document.getElementById('f-cat').value};try{await jsonFetch(id?'/api/financeiro/'+id:'/api/financeiro',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Lançamento atualizado.':'Lançamento realizado.','success');limparFinanceiroForm();carregarFinanceiro();}catch(e){toast(e.message,'error');}});
+document.getElementById('f-cancel').onclick=limparFinanceiroForm;
 
-        function calcularNumerosLote(qtd, inicial, porAndar) {
-            const numeros = [];
-            if (porAndar > 0) {
-                let andar = Math.floor(inicial / 100);
-                let pos = inicial % 100;
-                for (let i = 0; i < qtd; i++) {
-                    numeros.push(andar * 100 + pos);
-                    pos++;
-                    if (pos > porAndar) { andar++; pos = 1; }
-                }
-            } else {
-                for (let i = 0; i < qtd; i++) numeros.push(inicial + i);
-            }
-            return numeros;
-        }
+async function carregarRelatorios(){
+  const d=await jsonFetch('/api/relatorios');if(!d)return;
+  const el=document.getElementById('relatorio-metricas');
+  const arr=[['Quartos',d.total_quartos,'Total cadastrado'],['Ocupados',d.quartos_ocupados,'Hoje'],['Taxa de ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%','Hoje'],['Receita paga',moeda(d.receita_total),'Hospedagem + serviços'],['Hospedagem paga',moeda(d.receita_hospedagem),'Reservas'],['Serviços pagos',moeda(d.receita_servicos),'Pedidos'],['ADR',moeda(d.adr),'Diária média paga'],['RevPAR',moeda(d.revpar),'Indicador']];el.innerHTML=arr.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
+}
+async function carregarPainel(){
+  const el=document.getElementById('tab-painel');
+  el.innerHTML='<div class="metrics" id="painel-metrics"></div><div class="card"><div class="card-header"><div><h2 class="card-title">Operação</h2><p class="card-help">Acesse rapidamente reservas, pedidos e ordens de serviço.</p></div></div><div class="toolbar"><button class="btn btn-primary" onclick="switchTab('reservas')">Abrir reservas</button><button class="btn btn-secondary" onclick="switchTab('servicos')">Abrir pedidos</button><button class="btn btn-secondary" onclick="switchTab('ordens')">Abrir ordens de serviço</button></div></div>';
+  const d=await jsonFetch('/api/relatorios');const s=await jsonFetch('/api/assinatura');if(!d)return;
+  const m=[['Quartos',d.total_quartos],['Ocupados',d.quartos_ocupados],['Ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Receita paga',moeda(d.receita_total)]];
+  document.getElementById('painel-metrics').innerHTML=m.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
+  if(s){const card=document.createElement('div');card.className='notice '+(s.ativo?'success':'danger');card.textContent='Plano '+(s.plano_nome||'-')+' | status: '+(s.status||'-')+(s.periodo_fim?' | validade: '+s.periodo_fim:'');document.getElementById('tab-painel').insertBefore(card,document.getElementById('painel-metrics'));}
+}
+async function carregarIntegracoes(){
+  const d=await jsonFetch('/api/integracoes');if(!d)return;
+  document.getElementById('int-booking').value=d.booking_url||'';document.getElementById('int-airbnb').value=d.airbnb_url||'';document.getElementById('int-expedia').value=d.expedia_url||'';document.getElementById('int-hoteis').value=d.hoteis_url||'';document.getElementById('int-site').value=d.website_url||'';document.getElementById('int-maps-url').value=d.maps_url||'';document.getElementById('int-maps-nome').value=d.maps_nome||'';document.getElementById('int-place-id').value=d.maps_place_id||'';document.getElementById('int-endereco').value=d.endereco||'';document.getElementById('int-lat').value=d.latitude??'';document.getElementById('int-lng').value=d.longitude??'';document.getElementById('int-webhook-url').value=d.webhook_asaas_url||'';renderMapa(d.maps_embed_url);
+  await carregarPlanos();
+}
+async function carregarPlanos(){state.planos=await jsonFetch('/api/planos')||[];const el=document.getElementById('saas-plano');el.innerHTML=state.planos.map(p=>'<option value="'+p.id+'">'+escapar(p.nome)+' — '+moeda(p.preco_mensal)+'/mês</option>').join('');state.sub=await jsonFetch('/api/assinatura');if(state.sub){document.getElementById('saas-status').value=state.sub.status||'';document.getElementById('saas-fim').value=state.sub.periodo_fim||state.sub.trial_ate||'';}}
+async function contratarPlano(){const id=parseInt(document.getElementById('saas-plano').value,10);try{const d=await jsonFetch('/api/assinatura/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano_id:id})});if(d&&d.checkout_url)window.open(d.checkout_url,'_blank','noopener,noreferrer');else toast(d.mensagem||'Checkout criado.','success');}catch(e){toast(e.message,'error');}}
+document.getElementById('form-integracoes').addEventListener('submit',async e=>{e.preventDefault();const body={booking_url:document.getElementById('int-booking').value.trim(),airbnb_url:document.getElementById('int-airbnb').value.trim(),expedia_url:document.getElementById('int-expedia').value.trim(),hoteis_url:document.getElementById('int-hoteis').value.trim(),website_url:document.getElementById('int-site').value.trim(),maps_url:document.getElementById('int-maps-url').value.trim(),maps_nome:document.getElementById('int-maps-nome').value.trim(),maps_place_id:document.getElementById('int-place-id').value.trim(),endereco:document.getElementById('int-endereco').value.trim(),latitude:document.getElementById('int-lat').value||null,longitude:document.getElementById('int-lng').value||null};try{const d=await jsonFetch('/api/integracoes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(d.mensagem,'success');renderMapa(d.integracao?.maps_embed_url||null);}catch(e){toast(e.message,'error');}});
+async function pesquisarGoogleMaps(){const q=(document.getElementById('int-maps-nome').value||document.getElementById('int-endereco').value||'').trim();if(q.length<3){toast('Informe nome ou endereço.','error');return;}try{const d=await jsonFetch('/api/integracoes/maps/pesquisar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});const box=document.getElementById('resultado-maps');box.innerHTML='';(d.resultados||[]).forEach(p=>{const b=document.createElement('button');b.type='button';b.className='btn btn-secondary';b.style.margin='4px';b.textContent=(p.nome||'Local')+' — '+(p.endereco||'');b.onclick=()=>{document.getElementById('int-maps-nome').value=p.nome||'';document.getElementById('int-place-id').value=p.id||'';document.getElementById('int-endereco').value=p.endereco||'';document.getElementById('int-lat').value=p.latitude??'';document.getElementById('int-lng').value=p.longitude??'';document.getElementById('int-maps-url').value=p.maps_url||'';};box.appendChild(b);});if(!(d.resultados||[]).length)box.textContent='Nenhum local encontrado.';}catch(e){toast(e.message,'error');}}
+function renderMapa(url){const box=document.getElementById('mapa-hotel');box.innerHTML='';if(!url){box.className='notice info';box.textContent='Mapa incorporado disponível após configurar a chave do Google Maps no servidor.';return;}box.className='';const f=document.createElement('iframe');f.src=url;f.width='100%';f.height='350';f.style.border='0';f.loading='lazy';f.allowFullscreen=true;f.referrerPolicy='strict-origin-when-cross-origin';box.appendChild(f);}
+function preencherWhatsApp(){document.getElementById('wa-msg').value=document.getElementById('wa-template').value;}
+document.getElementById('wa-template').addEventListener('change',preencherWhatsApp);
+preencherWhatsApp();
+function enviarWhatsApp(){const tel=document.getElementById('wa-tel').value.replace(/\D/g,'');if(tel.length<10){toast('Informe um telefone válido com DDD.','error');return;}window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(document.getElementById('wa-msg').value),'_blank','noopener,noreferrer');}
 
-        function lerParametrosLote() {
-            return {
-                qtd: parseInt(document.getElementById('lote-qtd').value, 10),
-                inicial: parseInt(document.getElementById('lote-inicial').value, 10),
-                porAndar: parseInt(document.getElementById('lote-por-andar').value || '0', 10)
-            };
-        }
+async function carregarPlataforma(){
+  const aviso=document.getElementById('plataforma-aviso');const tb=document.getElementById('tabela-plataforma');aviso.className='notice info';aviso.textContent='Atualizando clientes...';
+  try{
+    const [hotels,plans]=await Promise.all([jsonFetch('/api/platform/hoteis'),jsonFetch('/api/planos')]);state.planos=plans||[];tb.innerHTML='';
+    (hotels||[]).forEach(h=>{
+      const adminNames=(h.admins||[]).map(a=>a.nome||a.username).join(', ')||'Sem administrador ativo';
+      const sub=h.assinatura||{};const status=h.bloqueado?'BLOQUEADO':(sub.status||'SEM ASSINATURA');const validade=sub.periodo_fim||sub.trial_ate||'-';
+      const tr=document.createElement('tr');
+      const planSel=state.planos.map(p=>'<option value="'+p.id+'" '+(String(p.id)===String(sub.plano_id)?'selected':'')+'>'+escapar(p.nome)+'</option>').join('');
+      const stSel=['ATIVA','TESTE','SUSPENSA','CANCELADA'].map(x=>'<option value="'+x+'" '+(String(sub.status||'')===x?'selected':'')+'>'+x+'</option>').join('');
+      tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong><div class="small">'+escapar(h.local||'-')+'</div></td><td>'+escapar(adminNames)+'</td><td><select id="plan-'+h.id+'">'+planSel+'</select></td><td><input id="dias-'+h.id+'" type="number" min="0" max="3660" value="'+(sub.periodo_fim?Math.max(0,Math.round((new Date(sub.periodo_fim)-new Date())/86400000)):30)+'" style="width:90px;padding:7px;border:1px solid #ccd3dd;border-radius:7px"> dias</td><td><span class="platform-status '+(h.bloqueado?'platform-blocked':'platform-open')+'">'+escapar(status)+'</span></td><td><div class="row-actions"><select id="status-'+h.id+'" style="padding:7px;border:1px solid #ccd3dd;border-radius:7px">'+stSel+'</select><button class="btn btn-primary" onclick="salvarAssinaturaPlataforma('+h.id+')">Salvar</button><button class="btn '+(h.bloqueado?'btn-success':'btn-danger')+'" onclick="alternarBloqueio('+h.id+','+(h.bloqueado?'false':'true')+')">'+(h.bloqueado?'Liberar':'Bloquear')+'</button></div></td>';
+      tb.appendChild(tr);
+    });
+    aviso.className='notice success';aviso.textContent=(hotels||[]).length+' hotel(is) encontrado(s).';
+  }catch(e){aviso.className='notice danger';aviso.textContent=e.message;}
+}
+async function alternarBloqueio(id,bloquear){const motivo=bloquear?(prompt('Motivo do bloqueio:','Pagamento pendente')||'Pagamento pendente'):'';if(bloquear&&!confirm('Bloquear o acesso deste hotel?'))return;if(!bloquear&&!confirm('Liberar o acesso deste hotel?'))return;try{await jsonFetch('/api/platform/hoteis/'+id+'/bloqueio',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({bloqueado:bloquear,motivo})});toast(bloquear?'Hotel bloqueado.':'Hotel liberado.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}
+async function salvarAssinaturaPlataforma(id){const plano_id=parseInt(document.getElementById('plan-'+id).value,10),status=document.getElementById('status-'+id).value,dias=parseInt(document.getElementById('dias-'+id).value,10);try{await jsonFetch('/api/platform/assinaturas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano_id,status,dias})});toast('Assinatura atualizada.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}
 
-        function validarParametrosLote(p) {
-            if (!Number.isInteger(p.qtd) || p.qtd < 1 || p.qtd > 500) return 'Informe uma quantidade entre 1 e 500.';
-            if (!Number.isInteger(p.inicial) || p.inicial < 1) return 'Informe um primeiro número válido.';
-            if (!Number.isInteger(p.porAndar) || p.porAndar < 0 || p.porAndar > 99) return 'Quartos por andar deve ficar entre 0 e 99.';
-            if (p.porAndar > 0 && (p.inicial % 100 < 1 || p.inicial % 100 > p.porAndar)) {
-                return 'Com ' + p.porAndar + ' quartos por andar, o primeiro número deve terminar entre 01 e ' + p.porAndar + ' (ex.: 101).';
-            }
-            return '';
-        }
+async function loadTab(tab){
+  if(CONTEXTO_USUARIO.role==='platform_admin'){if(tab==='plataforma')await carregarPlataforma();return;}
+  if(tab==='painel')await carregarPainel();
+  else if(tab==='quartos'){await carregarQuartos();}
+  else if(tab==='hospedes'){await carregarHospedes();}
+  else if(tab==='categorias'){await carregarCategorias();}
+  else if(tab==='reservas'){await carregarReservas();}
+  else if(tab==='servicos'){await carregarBase();await carregarServicos();await carregarPedidos();}
+  else if(tab==='ordens'){await carregarBase();await carregarOrdens();}
+  else if(tab==='equipe'){await carregarEquipe();}
+  else if(tab==='estoque'){await carregarEstoque();}
+  else if(tab==='financeiro'){await carregarFinanceiro();}
+  else if(tab==='relatorios'){await carregarRelatorios();}
+  else if(tab==='integracoes'){await carregarIntegracoes();}
+  else if(tab==='whatsapp'){preencherWhatsApp();}
+}
 
-        function atualizarPrevisaoLote() {
-            const el = document.getElementById('lote-previa');
-            if (!el) return;
-            const p = lerParametrosLote();
-            const erro = validarParametrosLote(p);
-            if (erro) { el.style.color = '#c0392b'; el.textContent = erro; return; }
-            const nums = calcularNumerosLote(p.qtd, p.inicial, p.porAndar);
-            el.style.color = '#2c3e50';
-            el.textContent = 'Serão criados ' + nums.length + ' quarto(s): ' + nums[0] + ' até ' + nums[nums.length - 1] + '.';
-        }
-
-        async function gerarQuartosLote(e) {
-            e.preventDefault();
-            const p = lerParametrosLote();
-            const erro = validarParametrosLote(p);
-            if (erro) { alert(erro); return; }
-            const preco = parseFloat(document.getElementById('lote-preco').value);
-            if (!(preco > 0)) { alert('Informe a diária base.'); return; }
-
-            const nums = calcularNumerosLote(p.qtd, p.inicial, p.porAndar);
-            if (!confirm('Criar ' + nums.length + ' quartos (' + nums[0] + ' até ' + nums[nums.length - 1] + ')?')) return;
-
-            const res = await fetch('/api/quartos/lote', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    quantidade: p.qtd,
-                    numero_inicial: p.inicial,
-                    por_andar: p.porAndar,
-                    tipo: document.getElementById('lote-tipo').value,
-                    preco_diaria: preco
-                })
-            });
-            const data = await res.json().catch(() => ({}));
-            if (res.ok) {
-                alert(data.mensagem);
-                carregarQuartos();
-            } else {
-                alert(data.erro || 'Não foi possível gerar os quartos.');
-            }
-        }
-
-        async function criarQuarto(e) {
-            e.preventDefault();
-            await fetch('/api/quartos', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    numero: document.getElementById('q-numero').value,
-                    tipo: document.getElementById('q-tipo').value,
-                    preco_diaria: parseFloat(document.getElementById('q-preco').value),
-                    status: 'DISPONIVEL'
-                })
-            });
-            document.getElementById('form-quarto').reset();
-            carregarQuartos();
-        }
-
-        async function deletarQuarto(numero) {
-            if(!confirm('Deseja excluir este quarto?')) return;
-            await fetch(`/api/quartos/${numero}`, { method: 'DELETE' });
-            carregarQuartos();
-        }
-
-        async function carregarHospedes() {
-            const res = await fetch('/api/hospedes');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-hospedes');
-            tbody.innerHTML = '';
-            data.forEach(h => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${escaparHtml(h.nome)}</td>
-                    <td>${escaparHtml(h.documento || '-')}</td>
-                    <td>${escaparHtml(h.telefone || '-')}</td>
-                    <td>${escaparHtml(h.email || '-')}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function criarHospede(e) {
-            e.preventDefault();
-            await fetch('/api/hospedes', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nome: document.getElementById('h-nome').value,
-                    documento: document.getElementById('h-doc').value,
-                    telefone: document.getElementById('h-tel').value,
-                    email: document.getElementById('h-email').value,
-                    observacoes: ''
-                })
-            });
-            document.getElementById('form-hospede').reset();
-            carregarHospedes();
-        }
-
-        async function carregarFaixas() {
-            const res = await fetch('/api/faixas_etarias');
-            faixasGlobais = await res.json();
-            const tbody = document.getElementById('tabela-faixas');
-            tbody.innerHTML = '';
-            faixasGlobais.forEach(f => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><b>${escaparHtml(f.nome)}</b></td>
-                    <td>${f.idade_min} a ${f.idade_max} anos</td>
-                    <td>R$ ${f.valor_adicional.toFixed(2)}</td>
-                    <td><button class="btn btn-danger" onclick="deletarFaixa(${f.id})">Excluir</button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function criarFaixa(e) {
-            e.preventDefault();
-            await fetch('/api/faixas_etarias', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nome: document.getElementById('fe-nome').value,
-                    idade_min: parseInt(document.getElementById('fe-min').value),
-                    idade_max: parseInt(document.getElementById('fe-max').value),
-                    valor_adicional: parseFloat(document.getElementById('fe-adicional').value)
-                })
-            });
-            document.getElementById('form-faixa').reset();
-            carregarFaixas();
-        }
-
-        async function deletarFaixa(id) {
-            if(!confirm('Deseja excluir esta categoria?')) return;
-            await fetch(`/api/faixas_etarias/${id}`, { method: 'DELETE' });
-            carregarFaixas();
-        }
-
-        async function carregarFaixasParaReserva() {
-            const res = await fetch('/api/faixas_etarias');
-            faixasGlobais = await res.json();
-            const container = document.getElementById('container-faixas-reserva');
-            container.innerHTML = '';
-            faixasGlobais.forEach(f => {
-                let div = document.createElement('div');
-                div.style = "flex: 1; min-width: 140px;";
-                div.innerHTML = `
-                    <label style="font-size: 12px; display:block;">${escaparHtml(f.nome)} <br>(+ R$ ${f.valor_adicional.toFixed(2)})</label>
-                    <input type="number" class="faixa-input" data-id="${f.id}" value="0" min="0" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        async function criarReserva(e) {
-            e.preventDefault();
-            const composicao = [];
-            document.querySelectorAll('.faixa-input').forEach(inp => {
-                composicao.push({ 
-                    faixa_id: parseInt(inp.getAttribute('data-id')), 
-                    quantidade: parseInt(inp.value) 
-                });
-            });
-
-            const res = await fetch('/api/reservas', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    hospede_id: parseInt(document.getElementById('r-hospede-id').value),
-                    quarto_numero: document.getElementById('r-quarto-num').value,
-                    check_in: document.getElementById('r-checkin').value,
-                    check_out: document.getElementById('r-checkout').value,
-                    diarias: parseInt(document.getElementById('r-diarias').value),
-                    composicao: composicao
-                })
-            });
-            const data = await res.json();
-            if(res.ok) {
-                alert(`Reserva efetuada com sucesso! Valor Total: R$ ${data.valor_total.toFixed(2)}`);
-                document.getElementById('form-reserva').reset();
-                carregarReservas();
-            } else {
-                alert('Erro ao criar reserva: ' + (data.erro || 'Erro desconhecido'));
-            }
-        }
-
-        async function carregarReservas() {
-            const res = await fetch('/api/reservas');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-reservas');
-            tbody.innerHTML = '';
-            data.forEach(r => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${r.id}</td>
-                    <td>${r.hospede_id} (${escaparHtml(r.hospede_nome) || 'N/D'})</td>
-                    <td><b>${escaparHtml(r.quarto_numero)}</b></td>
-                    <td>${escaparHtml(r.check_in)} até ${escaparHtml(r.check_out)}</td>
-                    <td>${escaparHtml(r.detalhes_pessoas)}</td>
-                    <td>${r.diarias}</td>
-                    <td>R$ ${r.valor_total.toFixed(2)}</td>
-                    <td><span class="badge ${r.status_pagamento.toLowerCase()}">${escaparHtml(r.status_pagamento)}</span></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function carregarEstoque() {
-            const res = await fetch('/api/estoque');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-estoque');
-            tbody.innerHTML = '';
-            data.forEach(i => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><b>${escaparHtml(i.item)}</b></td>
-                    <td>${escaparHtml(i.categoria)}</td>
-                    <td>${i.quantidade}</td>
-                    <td>R$ ${i.preco_unitario.toFixed(2)}</td>
-                    <td><button class="btn btn-danger" onclick="deletarEstoque(${i.id})">Excluir</button></td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function criarEstoque(e) {
-            e.preventDefault();
-            await fetch('/api/estoque', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    item: document.getElementById('e-item').value,
-                    categoria: document.getElementById('e-cat').value,
-                    quantidade: parseInt(document.getElementById('e-qtd').value),
-                    preco_unitario: parseFloat(document.getElementById('e-preco').value)
-                })
-            });
-            document.getElementById('form-estoque').reset();
-            carregarEstoque();
-        }
-
-        async function deletarEstoque(id) {
-            if(!confirm('Remover item?')) return;
-            await fetch(`/api/estoque/${id}`, { method: 'DELETE' });
-            carregarEstoque();
-        }
-
-        async function carregarFinanceiro() {
-            const res = await fetch('/api/financeiro');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-financeiro');
-            tbody.innerHTML = '';
-            data.forEach(f => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${escaparHtml(f.data)}</td>
-                    <td><b>${escaparHtml(f.tipo)}</b></td>
-                    <td>${escaparHtml(f.descricao)}</td>
-                    <td>${escaparHtml(f.categoria)}</td>
-                    <td style="color: ${f.tipo === 'ENTRADA' ? 'green' : 'red'}; font-weight: bold;">
-                        R$ ${f.valor.toFixed(2)}
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function criarFinanceiro(e) {
-            e.preventDefault();
-            await fetch('/api/financeiro', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tipo: document.getElementById('f-tipo').value,
-                    descricao: document.getElementById('f-desc').value,
-                    valor: parseFloat(document.getElementById('f-valor').value),
-                    categoria: document.getElementById('f-cat').value
-                })
-            });
-            document.getElementById('form-financeiro').reset();
-            carregarFinanceiro();
-        }
-
-        async function carregarOrdens() {
-            const res = await fetch('/api/ordens');
-            const data = await res.json();
-            const tbody = document.getElementById('tabela-ordens');
-            tbody.innerHTML = '';
-            data.forEach(o => {
-                let tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${o.id}</td>
-                    <td><b>${escaparHtml(o.quarto)}</b></td>
-                    <td>${escaparHtml(o.tipo)}</td>
-                    <td>${escaparHtml(o.descricao)}</td>
-                    <td><span class="badge ${o.status === 'CONCLUIDA' ? 'disponivel' : 'pendente'}">${escaparHtml(o.status)}</span></td>
-                    <td>${o.status !== 'CONCLUIDA' ? `<button class="btn btn-success" onclick="concluirOrdem(${o.id})">Concluir</button>` : '-'}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function criarOrdem(e) {
-            e.preventDefault();
-            await fetch('/api/ordens', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    quarto: document.getElementById('os-quarto').value,
-                    tipo: document.getElementById('os-tipo').value,
-                    descricao: document.getElementById('os-desc').value
-                })
-            });
-            document.getElementById('form-ordem').reset();
-            carregarOrdens();
-        }
-
-        async function concluirOrdem(id) {
-            await fetch(`/api/ordens/${id}/status`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'CONCLUIDA' })
-            });
-            carregarOrdens();
-        }
-
-        async function carregarRelatorios() {
-            const res = await fetch('/api/relatorios');
-            const data = await res.json();
-            const grid = document.getElementById('dados-relatorio');
-            grid.innerHTML = `
-                <div class="metric-card"><h5>Total de Quartos</h5><p>${data.total_quartos}</p></div>
-                <div class="metric-card"><h5>Quartos Ocupados</h5><p>${data.quartos_ocupados}</p></div>
-                <div class="metric-card"><h5>Taxa de Ocupação</h5><p>${data.taxa_ocupacao}%</p></div>
-                <div class="metric-card"><h5>ADR (Diária Média)</h5><p>R$ ${data.adr.toFixed(2)}</p></div>
-                <div class="metric-card"><h5>RevPAR</h5><p>R$ ${data.revpar.toFixed(2)}</p></div>
-                <div class="metric-card" style="border-left-color: #2ecc71;"><h5>Receita Hospedagem Total</h5><p style="color:#2ecc71;">R$ ${data.receita_total.toFixed(2)}</p></div>
-            `;
-        }
-
-        async function carregarPlanosSaaS() {
-            const select=document.getElementById('saas-plano');
-            if(!select) return;
-            const res=await fetch('/api/planos');
-            const data=await res.json().catch(()=>[]);
-            select.innerHTML='';
-            (data||[]).forEach(p=>{
-                const opt=document.createElement('option');
-                opt.value=p.id;
-                opt.textContent=p.nome+' — R$ '+Number(p.preco_mensal||0).toFixed(2)+'/mês';
-                select.appendChild(opt);
-            });
-            const subRes=await fetch('/api/assinatura');
-            const sub=await subRes.json().catch(()=>({}));
-            document.getElementById('saas-status').value=sub.status ? (sub.plano_nome+' — '+sub.status) : 'Sem assinatura';
-        }
-
-        async function contratarPlano() {
-            const planoId=parseInt(document.getElementById('saas-plano').value,10);
-            if(!planoId) return;
-            const res=await fetch('/api/assinatura/checkout',{
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({plano_id:planoId})
-            });
-            const data=await res.json().catch(()=>({}));
-            if(!res.ok){ alert(data.erro||'Não foi possível criar o Checkout.'); return; }
-            if(data.checkout_url) window.open(data.checkout_url,'_blank','noopener,noreferrer');
-            else alert(data.mensagem||'Checkout criado sem URL.');
-        }
-
-        async function carregarIntegracoes() {
-            try {
-                const res = await fetch('/api/integracoes');
-                const data = await res.json();
-                if(!res.ok) { alert(data.erro || 'Não foi possível carregar as integrações.'); return; }
-                document.getElementById('int-booking').value = data.booking_url || '';
-                document.getElementById('int-airbnb').value = data.airbnb_url || '';
-                document.getElementById('int-expedia').value = data.expedia_url || '';
-                document.getElementById('int-hoteis').value = data.hoteis_url || '';
-                document.getElementById('int-site').value = data.website_url || '';
-                document.getElementById('int-maps-url').value = data.maps_url || '';
-                document.getElementById('int-maps-nome').value = data.maps_nome || '';
-                document.getElementById('int-place-id').value = data.maps_place_id || '';
-                document.getElementById('int-endereco').value = data.endereco || '';
-                document.getElementById('int-lat').value = data.latitude ?? '';
-                document.getElementById('int-lng').value = data.longitude ?? '';
-                document.getElementById('int-webhook-url').value = data.webhook_asaas_url || '';
-                renderMapa(data.maps_embed_url);
-            } catch(e) { alert('Erro de conexão ao carregar integrações.'); }
-        }
-
-        async function salvarIntegracoes(e) {
-            e.preventDefault();
-            const body = {
-                booking_url: document.getElementById('int-booking').value.trim(),
-                airbnb_url: document.getElementById('int-airbnb').value.trim(),
-                expedia_url: document.getElementById('int-expedia').value.trim(),
-                hoteis_url: document.getElementById('int-hoteis').value.trim(),
-                website_url: document.getElementById('int-site').value.trim(),
-                maps_url: document.getElementById('int-maps-url').value.trim(),
-                maps_nome: document.getElementById('int-maps-nome').value.trim(),
-                maps_place_id: document.getElementById('int-place-id').value.trim(),
-                endereco: document.getElementById('int-endereco').value.trim(),
-                latitude: document.getElementById('int-lat').value || null,
-                longitude: document.getElementById('int-lng').value || null
-            };
-            const res = await fetch('/api/integracoes', {
-                method:'PUT',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify(body)
-            });
-            const data = await res.json().catch(()=>({}));
-            if(res.ok) {
-                alert(data.mensagem || 'Integrações salvas.');
-                renderMapa(data.integracao?.maps_embed_url || null);
-            } else {
-                alert(data.erro || 'Não foi possível salvar as integrações.');
-            }
-        }
-
-        async function pesquisarGoogleMaps() {
-            const q = document.getElementById('int-maps-nome').value.trim() || document.getElementById('int-endereco').value.trim();
-            if(q.length < 3) { alert('Informe o nome ou endereço do hotel primeiro.'); return; }
-            const res = await fetch('/api/integracoes/maps/pesquisar', {
-                method:'POST',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({q})
-            });
-            const data = await res.json().catch(()=>({}));
-            const box = document.getElementById('resultado-maps');
-            if(!res.ok) { box.innerHTML='<div style="color:#c0392b;">'+escaparHtml(data.erro || 'Erro no Google Maps.')+'</div>'; return; }
-            box.innerHTML='';
-            (data.resultados || []).forEach(p=>{
-                const btn=document.createElement('button');
-                btn.type='button'; btn.className='btn btn-secondary'; btn.style.margin='4px';
-                btn.textContent=(p.nome||'Local')+' — '+(p.endereco||'');
-                btn.onclick=()=>{
-                    document.getElementById('int-maps-nome').value=p.nome||'';
-                    document.getElementById('int-place-id').value=p.id||'';
-                    document.getElementById('int-endereco').value=p.endereco||'';
-                    document.getElementById('int-lat').value=p.latitude ?? '';
-                    document.getElementById('int-lng').value=p.longitude ?? '';
-                    document.getElementById('int-maps-url').value=p.maps_url||'';
-                };
-                box.appendChild(btn);
-            });
-            if(!(data.resultados||[]).length) box.textContent='Nenhum local encontrado.';
-        }
-
-        function renderMapa(url) {
-            const box=document.getElementById('mapa-hotel');
-            if(!box) return;
-            box.innerHTML='';
-            if(!url) {
-                box.innerHTML='<div style="padding:12px;background:#f8f9fa;border-radius:6px;color:#666;">Configure GOOGLE_MAPS_API_KEY no servidor para mostrar o mapa incorporado.</div>';
-                return;
-            }
-            const iframe=document.createElement('iframe');
-            iframe.src=url;
-            iframe.width='100%'; iframe.height='350'; iframe.style.border='0';
-            iframe.loading='lazy'; iframe.allowFullscreen=true;
-            iframe.referrerPolicy='strict-origin-when-cross-origin';
-            box.appendChild(iframe);
-        }
-
-        function preencherTemplateWhatsApp() {
-            const temp = document.getElementById('wa-template').value;
-            document.getElementById('wa-msg').value = temp;
-        }
-
-        function enviarWhatsApp() {
-            let tel = document.getElementById('wa-tel').value.replace(/\D/g, '');
-            let msg = encodeURIComponent(document.getElementById('wa-msg').value);
-            if(tel.length < 10) { alert('Digite um telefone válido com DDD.'); return; }
-            window.open(`https://wa.me/${tel}?text=${msg}`, '_blank');
-        }
-
-        renderizarMenu();
-        switchTab('quartos');
-    </script>
+renderNav();
+switchTab(primeiraAba,false);
+</script>
 </body>
 </html>'''
+
 
 if __name__ == '__main__':
     init_db()

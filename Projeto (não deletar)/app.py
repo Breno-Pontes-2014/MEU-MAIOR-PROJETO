@@ -1,15 +1,26 @@
 import os
 import datetime
+import json
 import secrets
 import time
 import sqlite3
+import urllib.parse
+import urllib.request
 import jwt
 from functools import wraps
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session, g
 from werkzeug.security import generate_password_hash, check_password_hash
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:
+    psycopg = None
+    dict_row = None
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'hotel.db')
+DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 JWT_SECRET_FILE = os.path.join(BASE_DIR, '.jwt_secret')
 TEMPLATES_DIR = BASE_DIR
 
@@ -55,12 +66,76 @@ LOGIN_MAX_FAILURES = 10
 LOGIN_LOCK_SECONDS = 15 * 60
 LOGIN_FAILURES = {}
 
+class DBCursor:
+    def __init__(self, connection, cursor):
+        self.connection = connection
+        self.cursor = cursor
+
+    def _sql(self, sql):
+        if self.connection.is_postgres:
+            sql = sql.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
+            sql = sql.replace('AUTOINCREMENT', '')
+            sql = sql.replace('?', '%s')
+        return sql
+
+    def execute(self, sql, params=None):
+        self.cursor.execute(self._sql(sql), params or ())
+        return self
+
+    def executemany(self, sql, seq_of_params):
+        self.cursor.executemany(self._sql(sql), seq_of_params)
+        return self
+
+    def fetchone(self):
+        return self.cursor.fetchone()
+
+    def fetchall(self):
+        return self.cursor.fetchall()
+
+    @property
+    def lastrowid(self):
+        if not self.connection.is_postgres:
+            return self.cursor.lastrowid
+        row = self.connection.raw.execute('SELECT LASTVAL()').fetchone()
+        return row[0] if row else None
+
+class DBConnection:
+    def __init__(self, raw, is_postgres=False):
+        self.raw = raw
+        self.is_postgres = is_postgres
+
+    def cursor(self):
+        return DBCursor(self, self.raw.cursor())
+
+    def execute(self, sql, params=None):
+        return self.cursor().execute(sql, params)
+
+    def commit(self):
+        self.raw.commit()
+
+    def rollback(self):
+        self.raw.rollback()
+
+    def close(self):
+        self.raw.close()
+
 def get_db():
+    if DATABASE_URL:
+        if psycopg is None:
+            raise RuntimeError('PostgreSQL foi configurado em DATABASE_URL, mas psycopg não está instalado. Execute: pip install "psycopg[binary]"')
+        conn = psycopg.connect(
+            DATABASE_URL,
+            row_factory=dict_row,
+            connect_timeout=10
+        )
+        conn.execute("SET statement_timeout = '30s'")
+        return DBConnection(conn, is_postgres=True)
+
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
     conn.execute('PRAGMA busy_timeout = 15000')
-    return conn
+    return DBConnection(conn, is_postgres=False)
 
 
 TENANT_TABLES = ['quartos','hospedes','faixas_etarias','reservas','estoque','fluxo_caixa','ordens_servico']
@@ -120,9 +195,17 @@ def clear_login_failures(key):
 
 def add_column_if_missing(cursor, table, column_def):
     column_name = column_def.split()[0]
-    cols = [r['name'] for r in cursor.execute(f'PRAGMA table_info({table})').fetchall()]
-    if column_name not in cols:
-        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column_def}')
+    if cursor.connection.is_postgres:
+        row = cursor.execute(
+            'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? AND column_name = ? LIMIT 1',
+            (table, column_name)
+        ).fetchone()
+        if row is None:
+            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column_def}')
+    else:
+        cols = [r['name'] for r in cursor.execute(f'PRAGMA table_info({table})').fetchall()]
+        if column_name not in cols:
+            cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column_def}')
 
 def get_or_create_default_hotel(cursor):
     hotel = cursor.execute('SELECT id FROM hoteis ORDER BY id LIMIT 1').fetchone()

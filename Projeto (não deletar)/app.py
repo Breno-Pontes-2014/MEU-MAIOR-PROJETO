@@ -584,7 +584,7 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    return render_template_string(DASHBOARD_TEMPLATE)
+    return render_template_string(DASHBOARD_TEMPLATE, csrf_token=csrf_token())
 
 # ==========================================
 # API - QUARTOS
@@ -962,6 +962,7 @@ REGISTER_TEMPLATE = """
     {% endif %}
 
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="mb-3">
             <label class="form-label">Usuário (Admin)</label>
             <input type="text" name="username" class="form-control" required>
@@ -1061,6 +1062,7 @@ LOGIN_TEMPLATE = """
     {% endif %}
 
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <div class="mb-3">
             <label class="form-label">Usuário</label>
             <input type="text" name="username" class="form-control" required>
@@ -2139,8 +2141,5 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
 </html>'''
 
 if __name__ == '__main__':
-    if not os.path.exists(DB_PATH):
-        init_db()
-    else:
-        init_db()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    init_db()
+    app.run(host=os.getenv('HOST','0.0.0.0'), port=int(os.getenv('PORT','5000')), debug=os.getenv('FLASK_DEBUG','0').lower() in ('1','true','yes'))

@@ -939,6 +939,98 @@ def relatorios_gerenciais(current_user, role):
     }), 200
 
 # ==========================================
+# API - SAAS / CONTA / PLANOS
+# ==========================================
+@app.route('/api/me')
+@token_required
+def api_me(current_user, role):
+    conn=get_db()
+    try:
+        hotel=conn.execute('SELECT id,nome,data_cadastro,local FROM hoteis WHERE id=?',(g.hotel_id,)).fetchone()
+        return jsonify({'usuario':{'id':g.current_user_id,'username':g.current_user,'role':g.current_role,'hotel_id':g.hotel_id},
+                        'hotel':dict(hotel) if hotel else None,
+                        'assinatura':get_subscription(conn,g.hotel_id)}),200
+    finally:
+        conn.close()
+
+@app.route('/api/planos')
+def api_planos():
+    conn=get_db()
+    try:
+        return jsonify([dict(x) for x in conn.execute('SELECT id,nome,preco_mensal,limite_quartos,limite_usuarios,dias_ciclo,descricao FROM planos WHERE ativo=1 ORDER BY preco_mensal,id').fetchall()]),200
+    finally:
+        conn.close()
+
+@app.route('/api/assinatura')
+@token_required
+def api_assinatura(current_user, role):
+    conn=get_db()
+    try:
+        return jsonify(get_subscription(conn,g.hotel_id) or {'ativo':False,'status':'SEM_ASSINATURA'}),200
+    finally:
+        conn.close()
+
+@app.route('/api/assinatura/limites')
+@token_required
+def api_assinatura_limites(current_user, role):
+    conn=get_db()
+    try:
+        sub=get_subscription(conn,g.hotel_id)
+        q=conn.execute('SELECT COUNT(*) total FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['total']
+        u=conn.execute('SELECT COUNT(*) total FROM usuarios WHERE hotel_id=?',(g.hotel_id,)).fetchone()['total']
+        return jsonify({'plano':sub,'quartos':{'usados':q,'limite':sub['limite_quartos'] if sub else 0},
+                        'usuarios':{'usados':u,'limite':sub['limite_usuarios'] if sub else 0}}),200
+    finally:
+        conn.close()
+
+@app.route('/api/assinatura/solicitar',methods=['POST'])
+@token_required
+def api_solicitar_plano(current_user, role):
+    if not require_admin_role():
+        return jsonify({'erro':'Apenas o administrador do hotel pode solicitar alteração de plano.'}),403
+    data=request.get_json(silent=True) or {}
+    try:
+        plano_id=int(data.get('plano_id'))
+    except (TypeError,ValueError):
+        return jsonify({'erro':'Plano inválido.'}),400
+    conn=get_db()
+    try:
+        plano=conn.execute('SELECT id,nome,preco_mensal,dias_ciclo FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
+        if not plano:
+            return jsonify({'erro':'Plano não encontrado.'}),404
+        checkout=os.getenv(f'SAAS_CHECKOUT_URL_{plano_id}',os.getenv('SAAS_CHECKOUT_URL','')).strip()
+        return jsonify({'mensagem':'Solicitação registrada. O pagamento ainda precisa ser confirmado pelo gateway.',
+                        'plano':dict(plano),'checkout_url':checkout or None}),202
+    finally:
+        conn.close()
+
+@app.route('/api/admin/assinaturas/<int:hotel_id>',methods=['PUT'])
+def api_admin_assinatura(hotel_id):
+    esperado=os.getenv('SAAS_ADMIN_TOKEN','').strip()
+    fornecido=request.headers.get('X-SaaS-Admin-Token','').strip()
+    if not esperado or not fornecido or not secrets.compare_digest(esperado,fornecido):
+        return jsonify({'erro':'Não autorizado.'}),401
+    data=request.get_json(silent=True) or {}
+    conn=get_db()
+    try:
+        plano_id=int(data.get('plano_id'))
+        status=str(data.get('status','ATIVA')).upper()
+        if status not in ('ATIVA','TESTE','SUSPENSA','CANCELADA'):
+            return jsonify({'erro':'Status inválido.'}),400
+        plano=conn.execute('SELECT id,dias_ciclo FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
+        if not plano:
+            return jsonify({'erro':'Plano inválido.'}),400
+        dias=int(data.get('dias',plano['dias_ciclo']))
+        hoje=datetime.date.today()
+        fim=hoje+datetime.timedelta(days=dias)
+        conn.execute('INSERT INTO assinaturas (hotel_id,plano_id,status,inicio,periodo_fim,trial_ate,gateway,atualizado_em) VALUES (?,?,?,?,?,?,?,?)',
+                     (hotel_id,plano_id,status,hoje.isoformat(),fim.isoformat(),fim.isoformat() if status=='TESTE' else None,'plataforma',datetime.datetime.utcnow().isoformat()))
+        conn.commit()
+        return jsonify({'mensagem':'Assinatura atualizada.','hotel_id':hotel_id}),200
+    finally:
+        conn.close()
+
+# ==========================================
 # TEMPLATES HTML
 # ==========================================
 

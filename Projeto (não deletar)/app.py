@@ -444,7 +444,7 @@ def init_db():
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if 'user' not in session:
+        if 'user_id' not in session:
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
@@ -452,22 +452,32 @@ def login_required(f):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Corrigido: Agora repassa o usuário logado via sessão corretamente, em vez de sobrepor por 'admin'
-        if 'user' in session:
-            return f(session['user'], 'admin', *args, **kwargs)
-        token = None
-        auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-        if not token:
-            return jsonify({'erro': 'Token de acesso não fornecido.'}), 401
+        conn=get_db()
         try:
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            current_user = data['username']
-            role = data.get('role', 'user')
-        except Exception:
-            return jsonify({'erro': 'Token inválido ou expirado.'}), 401
-        return f(current_user, role, *args, **kwargs)
+            user=None
+            if session.get('user_id'):
+                user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? LIMIT 1',(session['user_id'],)).fetchone()
+            if not user:
+                auth=request.headers.get('Authorization','')
+                token=auth[7:].strip() if auth.startswith('Bearer ') else None
+                if not token:
+                    return jsonify({'erro':'Token de acesso não fornecido.'}),401
+                try:
+                    data=jwt.decode(token,JWT_SECRET,algorithms=['HS256'])
+                except jwt.ExpiredSignatureError:
+                    return jsonify({'erro':'Token expirado.'}),401
+                except jwt.InvalidTokenError:
+                    return jsonify({'erro':'Token inválido.'}),401
+                user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? OR username=? LIMIT 1',(data.get('user_id'),data.get('username'))).fetchone()
+            if not user or not user['hotel_id']:
+                return jsonify({'erro':'Usuário sem hotel vinculado.'}),403
+            g.current_user_id=user['id']; g.current_user=user['username']; g.current_role=user['role']; g.hotel_id=user['hotel_id']
+            g.subscription=get_subscription(conn,g.hotel_id)
+            if request.endpoint not in PUBLIC_API_ENDPOINTS_WHEN_EXPIRED and (not g.subscription or not g.subscription['ativo']):
+                return subscription_blocked_response()
+            return f(user['username'],user['role'],*args,**kwargs)
+        finally:
+            conn.close()
     return decorated
 
 @app.route('/')

@@ -1,9 +1,11 @@
 import os
 import datetime
+import secrets
+import time
 import sqlite3
 import jwt
 from functools import wraps
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session, g
 from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -16,29 +18,238 @@ app = Flask(
     template_folder=TEMPLATES_DIR
 )
 
-def get_or_create_jwt_secret():
-    if os.path.exists(JWT_SECRET_FILE):
+def get_or_create_secret(env_name, file_path=None):
+    value = os.getenv(env_name, '').strip()
+    if value:
+        return value
+    if file_path and os.path.exists(file_path):
         try:
-            with open(JWT_SECRET_FILE, 'r', encoding='utf-8') as f:
-                secret = f.read().strip()
-                if secret:
-                    return secret
+            with open(file_path, 'r', encoding='utf-8') as f:
+                value = f.read().strip()
+                if value:
+                    return value
         except Exception:
             pass
-    secret = os.urandom(24).hex()
-    try:
-        with open(JWT_SECRET_FILE, 'w', encoding='utf-8') as f:
-            f.write(secret)
-    except Exception:
-        pass
-    return secret
+    value = secrets.token_urlsafe(48)
+    if file_path:
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(value)
+        except Exception:
+            pass
+    return value
 
-app.config['SECRET_KEY'] = get_or_create_jwt_secret()
+app.config['SECRET_KEY'] = get_or_create_secret('FLASK_SECRET_KEY', JWT_SECRET_FILE)
+JWT_SECRET = get_or_create_secret('JWT_SECRET', JWT_SECRET_FILE)
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.getenv('SESSION_COOKIE_SECURE', '0').lower() in ('1', 'true', 'yes'),
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=8),
+    MAX_CONTENT_LENGTH=2 * 1024 * 1024
+)
+
+FORCE_HTTPS = os.getenv('FORCE_HTTPS', '0').lower() in ('1', 'true', 'yes')
+LOGIN_MAX_FAILURES = 10
+LOGIN_LOCK_SECONDS = 15 * 60
+LOGIN_FAILURES = {}
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 15000')
     return conn
+
+
+TENANT_TABLES = ['quartos','hospedes','faixas_etarias','reservas','estoque','fluxo_caixa','ordens_servico']
+PUBLIC_API_ENDPOINTS_WHEN_EXPIRED = {'api_planos','api_minha_assinatura','api_solicitar_assinatura'}
+DEFAULT_PLANS = [
+    ('Teste Grátis', 0.0, 10, 2, 7, 'Teste gratuito por 7 dias'),
+    ('Básico', 79.90, 50, 5, 30, 'Até 50 quartos e 5 usuários'),
+    ('Profissional', 149.90, 150, 10, 30, 'Até 150 quartos e 10 usuários'),
+    ('Premium', 299.90, 500, 20, 30, 'Até 500 quartos e 20 usuários')
+]
+
+def csrf_token():
+    token = session.get('_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['_csrf_token'] = token
+    return token
+
+def check_csrf():
+    expected = session.get('_csrf_token')
+    provided = request.form.get('csrf_token') or request.headers.get('X-CSRFToken')
+    return bool(expected and provided and secrets.compare_digest(expected, provided))
+
+def validate_password(password):
+    if not isinstance(password, str) or len(password) < 10:
+        return 'A senha deve ter pelo menos 10 caracteres.'
+    if not any(ch.isupper() for ch in password):
+        return 'A senha deve conter pelo menos uma letra maiúscula.'
+    if not any(ch.islower() for ch in password):
+        return 'A senha deve conter pelo menos uma letra minúscula.'
+    if not any(ch.isdigit() for ch in password):
+        return 'A senha deve conter pelo menos um número.'
+    return None
+
+def client_ip():
+    return request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown').split(',')[0].strip()
+
+def login_is_locked(key):
+    info = LOGIN_FAILURES.get(key)
+    if not info:
+        return False
+    if time.time() >= info['until']:
+        LOGIN_FAILURES.pop(key, None)
+        return False
+    return info['count'] >= LOGIN_MAX_FAILURES
+
+def register_login_failure(key):
+    now = time.time()
+    info = LOGIN_FAILURES.get(key)
+    if not info or now >= info['until']:
+        LOGIN_FAILURES[key] = {'count': 1, 'until': now + LOGIN_LOCK_SECONDS}
+    else:
+        info['count'] += 1
+
+def clear_login_failures(key):
+    LOGIN_FAILURES.pop(key, None)
+
+def add_column_if_missing(cursor, table, column_def):
+    column_name = column_def.split()[0]
+    cols = [r['name'] for r in cursor.execute(f'PRAGMA table_info({table})').fetchall()]
+    if column_name not in cols:
+        cursor.execute(f'ALTER TABLE {table} ADD COLUMN {column_def}')
+
+def get_or_create_default_hotel(cursor):
+    hotel = cursor.execute('SELECT id FROM hoteis ORDER BY id LIMIT 1').fetchone()
+    if hotel:
+        return hotel['id']
+    cursor.execute(
+        'INSERT INTO hoteis (nome, data_cadastro, local) VALUES (?, ?, ?)',
+        ('Hotel Principal', datetime.date.today().isoformat(), 'Não informado')
+    )
+    return cursor.lastrowid
+
+def ensure_planos(cursor):
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS planos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            preco_mensal REAL NOT NULL DEFAULT 0,
+            limite_quartos INTEGER NOT NULL DEFAULT 10,
+            limite_usuarios INTEGER NOT NULL DEFAULT 2,
+            dias_ciclo INTEGER NOT NULL DEFAULT 30,
+            descricao TEXT,
+            ativo INTEGER NOT NULL DEFAULT 1
+        )
+    ''')
+    for nome, preco, lim_quartos, lim_usuarios, dias_ciclo, descricao in DEFAULT_PLANS:
+        cursor.execute('''
+            INSERT INTO planos (nome, preco_mensal, limite_quartos, limite_usuarios, dias_ciclo, descricao, ativo)
+            SELECT ?, ?, ?, ?, ?, ?, 1
+            WHERE NOT EXISTS (SELECT 1 FROM planos WHERE nome = ?)
+        ''', (nome, preco, lim_quartos, lim_usuarios, dias_ciclo, descricao, nome))
+
+def ensure_assinaturas(cursor):
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS assinaturas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hotel_id INTEGER NOT NULL,
+            plano_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'TESTE',
+            inicio TEXT NOT NULL,
+            periodo_fim TEXT,
+            trial_ate TEXT,
+            gateway TEXT,
+            cliente_externo TEXT,
+            assinatura_externa TEXT,
+            atualizado_em TEXT NOT NULL,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id),
+            FOREIGN KEY (plano_id) REFERENCES planos(id)
+        )
+    ''')
+
+def ensure_subscription_for_hotel(cursor, hotel_id):
+    sub = cursor.execute('SELECT id FROM assinaturas WHERE hotel_id = ? ORDER BY id DESC LIMIT 1',(hotel_id,)).fetchone()
+    if sub:
+        return
+    plano = cursor.execute("SELECT id FROM planos WHERE nome = 'Teste Grátis' LIMIT 1").fetchone()
+    hoje = datetime.date.today()
+    trial_ate = hoje + datetime.timedelta(days=7)
+    cursor.execute('''
+        INSERT INTO assinaturas
+        (hotel_id, plano_id, status, inicio, periodo_fim, trial_ate, gateway, atualizado_em)
+        VALUES (?, ?, 'TESTE', ?, ?, ?, 'interno', ?)
+    ''', (hotel_id, plano['id'], hoje.isoformat(), trial_ate.isoformat(), trial_ate.isoformat(), datetime.datetime.utcnow().isoformat()))
+
+def get_subscription(conn, hotel_id):
+    row = conn.execute('''
+        SELECT s.*, p.nome AS plano_nome, p.preco_mensal, p.limite_quartos, p.limite_usuarios, p.dias_ciclo
+        FROM assinaturas s
+        JOIN planos p ON p.id = s.plano_id
+        WHERE s.hotel_id = ?
+        ORDER BY s.id DESC
+        LIMIT 1
+    ''', (hotel_id,)).fetchone()
+    if not row:
+        return None
+    data = dict(row)
+    hoje = datetime.date.today()
+    ativo = data['status'] == 'ATIVA'
+    teste_ok = data['status'] == 'TESTE' and data.get('trial_ate') and hoje <= datetime.date.fromisoformat(data['trial_ate'][:10])
+    if data.get('periodo_fim') and data['status'] == 'ATIVA':
+        try:
+            ativo = ativo and hoje <= datetime.date.fromisoformat(data['periodo_fim'][:10])
+        except ValueError:
+            ativo = False
+    data['ativo'] = bool(ativo or teste_ok)
+    data['teste'] = bool(teste_ok)
+    return data
+
+def subscription_blocked_response():
+    return jsonify({
+        'erro': 'Assinatura expirada ou inativa.',
+        'codigo': 'ASSINATURA_INATIVA',
+        'mensagem': 'Acesse a área de assinatura para renovar ou ativar um plano.'
+    }), 402
+
+def require_admin_role():
+    return getattr(g, 'current_role', None) in ('admin','platform_admin')
+
+def enforce_room_quota(conn, quantidade_nova=1):
+    sub = getattr(g, 'subscription', None)
+    if not sub:
+        return True, None
+    usados = conn.execute('SELECT COUNT(*) AS total FROM quartos WHERE hotel_id = ?',(g.hotel_id,)).fetchone()['total']
+    if usados + quantidade_nova > int(sub['limite_quartos']):
+        return False, f"Seu plano permite {sub['limite_quartos']} quarto(s). Limite atingido."
+    return True, None
+
+@app.before_request
+def aplicar_protecoes():
+    if FORCE_HTTPS and not request.is_secure and request.headers.get('X-Forwarded-Proto','').lower() != 'https':
+        return redirect(request.url.replace('http://','https://',1), code=301)
+    if request.method in ('POST','PUT','PATCH','DELETE'):
+        if request.endpoint in ('login','registro') or request.path.startswith('/api/'):
+            if not check_csrf():
+                if request.path.startswith('/api/'):
+                    return jsonify({'erro':'Token CSRF ausente ou inválido.'}), 403
+                return 'Sessão expirada. Recarregue a página e tente novamente.', 403
+    return None
+
+@app.after_request
+def headers_seguros(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+    if request.path.startswith('/api/') or request.path in ('/login','/registro'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 def init_db():
     conn = get_db()
@@ -105,7 +316,9 @@ def init_db():
             documento TEXT,
             telefone TEXT,
             email TEXT,
-            observacoes TEXT
+            observacoes TEXT,
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
 
@@ -116,7 +329,9 @@ def init_db():
             nome TEXT NOT NULL,
             idade_min INTEGER NOT NULL,
             idade_max INTEGER NOT NULL,
-            valor_adicional REAL NOT NULL DEFAULT 0.0
+            valor_adicional REAL NOT NULL DEFAULT 0.0,
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
     
@@ -137,7 +352,9 @@ def init_db():
             diarias INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL DEFAULT 'CONFIRMADA',
             valor_total REAL,
-            status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE'
+            status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
 
@@ -148,7 +365,9 @@ def init_db():
             item TEXT NOT NULL,
             categoria TEXT NOT NULL,
             quantidade INTEGER NOT NULL DEFAULT 0,
-            preco_unitario REAL NOT NULL DEFAULT 0.0
+            preco_unitario REAL NOT NULL DEFAULT 0.0,
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
 
@@ -160,7 +379,9 @@ def init_db():
             descricao TEXT NOT NULL,
             valor REAL NOT NULL,
             categoria TEXT NOT NULL,
-            data TEXT NOT NULL
+            data TEXT NOT NULL,
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
 
@@ -171,7 +392,9 @@ def init_db():
             quarto TEXT NOT NULL,
             tipo TEXT NOT NULL,
             descricao TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'PENDENTE'
+            status TEXT NOT NULL DEFAULT 'PENDENTE',
+            hotel_id INTEGER,
+            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
         )
     ''')
 
@@ -182,14 +405,38 @@ def init_db():
         cursor.execute('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)',
                        ('admin', hashed_pw, 'admin'))
 
-    # Insere faixas etárias padrão
-    cursor.execute('SELECT COUNT(*) as total FROM faixas_etarias')
-    if cursor.fetchone()['total'] == 0:
-        cursor.executemany('INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional) VALUES (?, ?, ?, ?)', [
-            ('Criança (Até 11 anos)', 0, 11, 0.0),
-            ('Adulto Padrão', 12, 59, 0.0),
-            ('Idoso', 60, 120, 0.0)
-        ])
+    # Migração multi-hotel de dados já existentes.
+    add_column_if_missing(cursor,'usuarios','hotel_id INTEGER')
+    add_column_if_missing(cursor,'tipos_quarto','hotel_id INTEGER')
+    add_column_if_missing(cursor,'quartos','hotel_id INTEGER')
+    add_column_if_missing(cursor,'hospedes','hotel_id INTEGER')
+    add_column_if_missing(cursor,'faixas_etarias','hotel_id INTEGER')
+    add_column_if_missing(cursor,'reservas','hotel_id INTEGER')
+    add_column_if_missing(cursor,'estoque','hotel_id INTEGER')
+    add_column_if_missing(cursor,'fluxo_caixa','hotel_id INTEGER')
+    add_column_if_missing(cursor,'ordens_servico','hotel_id INTEGER')
+
+    ensure_planos(cursor)
+    ensure_assinaturas(cursor)
+
+    default_hotel_id = get_or_create_default_hotel(cursor)
+    for table in TENANT_TABLES:
+        cursor.execute(f'UPDATE {table} SET hotel_id = ? WHERE hotel_id IS NULL',(default_hotel_id,))
+    cursor.execute('UPDATE usuarios SET hotel_id = ? WHERE hotel_id IS NULL',(default_hotel_id,))
+
+    for hotel in cursor.execute('SELECT id FROM hoteis ORDER BY id').fetchall():
+        hid=hotel['id']
+        qtd=cursor.execute('SELECT COUNT(*) AS total FROM faixas_etarias WHERE hotel_id = ?',(hid,)).fetchone()['total']
+        if qtd == 0:
+            cursor.executemany(
+                'INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional, hotel_id) VALUES (?, ?, ?, ?, ?)',
+                [('Criança (Até 11 anos)',0,11,0.0,hid),('Adulto Padrão',12,59,0.0,hid),('Idoso',60,120,0.0,hid)]
+            )
+        ensure_subscription_for_hotel(cursor,hid)
+
+    for table in TENANT_TABLES:
+        cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_hotel_id ON {table}(hotel_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_usuarios_hotel_id ON usuarios(hotel_id)')
 
     conn.commit()
     conn.close()

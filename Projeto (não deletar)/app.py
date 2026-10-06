@@ -844,13 +844,13 @@ def gerenciar_estoque(current_user, role):
     cursor = conn.cursor()
     if request.method == 'POST':
         data = request.get_json() or {}
-        cursor.execute('INSERT INTO estoque (item, categoria, quantidade, preco_unitario) VALUES (?, ?, ?, ?)',
-                       (data.get('item'), data.get('categoria'), int(data.get('quantidade', 0)), float(data.get('preco_unitario', 0.0))))
+        cursor.execute('INSERT INTO estoque (item, categoria, quantidade, preco_unitario, hotel_id) VALUES (?, ?, ?, ?, ?)',
+                       (data.get('item'), data.get('categoria'), int(data.get('quantidade', 0)), float(data.get('preco_unitario', 0.0)), g.hotel_id))
         conn.commit()
         conn.close()
         return jsonify({'mensagem': 'Item adicionado!'}), 201
     
-    itens = [dict(row) for row in cursor.execute('SELECT * FROM estoque ORDER BY item').fetchall()]
+    itens = [dict(row) for row in cursor.execute('SELECT * FROM estoque WHERE hotel_id=? ORDER BY item',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(itens), 200
 
@@ -859,7 +859,7 @@ def gerenciar_estoque(current_user, role):
 def deletar_estoque(current_user, role, item_id):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM estoque WHERE id = ?', (item_id,))
+    cursor.execute('DELETE FROM estoque WHERE id = ? AND hotel_id=?', (item_id,g.hotel_id))
     conn.commit()
     conn.close()
     return jsonify({'mensagem': 'Removido!'}), 200
@@ -874,13 +874,13 @@ def gerenciar_financeiro(current_user, role):
     cursor = conn.cursor()
     if request.method == 'POST':
         data = request.get_json() or {}
-        cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data) VALUES (?, ?, ?, ?, ?)',
-                       (data.get('tipo'), data.get('descricao'), float(data.get('valor', 0)), data.get('categoria', 'Geral'), datetime.date.today().isoformat()))
+        cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
+                       (data.get('tipo'), data.get('descricao'), float(data.get('valor', 0)), data.get('categoria', 'Geral'), datetime.date.today().isoformat(), g.hotel_id))
         conn.commit()
         conn.close()
         return jsonify({'mensagem': 'Lançado!'}), 201
 
-    lancamentos = [dict(row) for row in cursor.execute('SELECT * FROM fluxo_caixa ORDER BY id DESC').fetchall()]
+    lancamentos = [dict(row) for row in cursor.execute('SELECT * FROM fluxo_caixa WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(lancamentos), 200
 
@@ -894,13 +894,13 @@ def gerenciar_ordens(current_user, role):
     cursor = conn.cursor()
     if request.method == 'POST':
         data = request.get_json() or {}
-        cursor.execute('INSERT INTO ordens_servico (quarto, tipo, descricao, status) VALUES (?, ?, ?, ?)',
-                       (data.get('quarto'), data.get('tipo'), data.get('descricao'), 'PENDENTE'))
+        cursor.execute('INSERT INTO ordens_servico (quarto, tipo, descricao, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
+                       (data.get('quarto'), data.get('tipo'), data.get('descricao'), 'PENDENTE', g.hotel_id))
         conn.commit()
         conn.close()
         return jsonify({'mensagem': 'OS criada!'}), 201
 
-    ordens = [dict(row) for row in cursor.execute('SELECT * FROM ordens_servico ORDER BY id DESC').fetchall()]
+    ordens = [dict(row) for row in cursor.execute('SELECT * FROM ordens_servico WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]
     conn.close()
     return jsonify(ordens), 200
 
@@ -910,7 +910,7 @@ def atualizar_ordem(current_user, role, oid):
     data = request.get_json() or {}
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('UPDATE ordens_servico SET status = ? WHERE id = ?', (data.get('status', 'CONCLUIDA'), oid))
+    cursor.execute('UPDATE ordens_servico SET status = ? WHERE id = ? AND hotel_id=?', (data.get('status', 'CONCLUIDA'), oid,g.hotel_id))
     conn.commit()
     conn.close()
     return jsonify({'mensagem': 'Status atualizado!'}), 200

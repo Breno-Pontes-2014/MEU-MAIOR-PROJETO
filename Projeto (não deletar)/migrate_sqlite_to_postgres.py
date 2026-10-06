@@ -11,7 +11,7 @@ TABLES = [
     "hoteis", "usuarios", "tipos_quarto", "quartos", "hospedes",
     "faixas_etarias", "reservas", "estoque", "fluxo_caixa",
     "ordens_servico", "planos", "assinaturas", "hotel_integracoes",
-    "webhook_eventos"
+    "webhook_eventos", "servicos", "pedidos_hospede", "auditoria"
 ]
 
 def sqlite_tables(conn):

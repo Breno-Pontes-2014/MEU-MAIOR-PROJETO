@@ -75,7 +75,7 @@
 <body>
     <div class="sidebar" id="sidebar">
         <div class="brand">
-            <div class="brand-icon">🏨</div>
+            <div class="brand-icon"></div>
             <div class="brand-text">Hotel Master<small>Gestão hoteleira</small></div>
         </div>
         <div class="user-card">
@@ -89,7 +89,7 @@
         </nav>
 
         <div class="sidebar-footer">
-            <button type="button" id="btn-editar-menu" class="btn-menu-editar" onclick="alternarEdicaoMenu()">✏️ Editar menu</button>
+            <button type="button" id="btn-editar-menu" class="btn-menu-editar" onclick="alternarEdicaoMenu()">️ Editar menu</button>
             <button type="button" id="btn-restaurar-menu" class="btn-menu-restaurar" style="display:none;" onclick="restaurarMenuPadrao()">↺ Restaurar padrão</button>
             <a href="/logout" class="btn-sair">⎋ Sair</a>
         </div>
@@ -310,15 +310,15 @@
         let menuEditando = false;
 
         const menuItensPadrao = [
-            { id: 'quartos',    icone: '🛏️', nome: 'Quartos',               visivel: true },
-            { id: 'hospedes',   icone: '👥', nome: 'Hóspedes',              visivel: true },
-            { id: 'faixas',     icone: '⚙️', nome: 'Faixas Etárias',        visivel: true },
-            { id: 'reservas',   icone: '📅', nome: 'Reservas & Preços',     visivel: true },
-            { id: 'estoque',    icone: '🛒', nome: 'PDV & Estoque',         visivel: true },
-            { id: 'financeiro', icone: '💰', nome: 'Financeiro',            visivel: true },
-            { id: 'ordens',     icone: '🛠️', nome: 'Ordens de Serviço',     visivel: true },
-            { id: 'relatorios', icone: '📊', nome: 'Relatórios (ADR/RevPAR)', visivel: true },
-            { id: 'whatsapp',   icone: '💬', nome: 'WhatsApp',              visivel: true }
+            { id: 'quartos',    icone: '️', nome: 'Quartos',               visivel: true },
+            { id: 'hospedes',   icone: '', nome: 'Hóspedes',              visivel: true },
+            { id: 'faixas',     icone: '️', nome: 'Faixas Etárias',        visivel: true },
+            { id: 'reservas',   icone: '', nome: 'Reservas & Preços',     visivel: true },
+            { id: 'estoque',    icone: '', nome: 'PDV & Estoque',         visivel: true },
+            { id: 'financeiro', icone: '', nome: 'Financeiro',            visivel: true },
+            { id: 'ordens',     icone: '️', nome: 'Ordens de Serviço',     visivel: true },
+            { id: 'relatorios', icone: '', nome: 'Relatórios (ADR/RevPAR)', visivel: true },
+            { id: 'whatsapp',   icone: '', nome: 'WhatsApp',              visivel: true }
         ];
 
         function lerJsonLocal(chave) {
@@ -385,7 +385,7 @@
                 controles.className = 'menu-controls';
                 controles.appendChild(criarBotaoMenu('▲', 'Subir', index === 0, () => moverMenu(index, -1)));
                 controles.appendChild(criarBotaoMenu('▼', 'Descer', index === menu.length - 1, () => moverMenu(index, 1)));
-                controles.appendChild(criarBotaoMenu('✎', 'Renomear', false, () => renomearMenu(index)));
+                controles.appendChild(criarBotaoMenu('', 'Renomear', false, () => renomearMenu(index)));
                 controles.appendChild(item.visivel
                     ? criarBotaoMenu('✕', 'Ocultar', false, () => alternarVisibilidadeMenu(index))
                     : criarBotaoMenu('＋', 'Mostrar', false, () => alternarVisibilidadeMenu(index)));
@@ -424,7 +424,7 @@
         function alternarEdicaoMenu() {
             menuEditando = !menuEditando;
             document.getElementById('sidebar').classList.toggle('editando', menuEditando);
-            document.getElementById('btn-editar-menu').textContent = menuEditando ? '✔ Concluir edição' : '✏️ Editar menu';
+            document.getElementById('btn-editar-menu').textContent = menuEditando ? ' Concluir edição' : '️ Editar menu';
             document.getElementById('btn-restaurar-menu').style.display = menuEditando ? 'block' : 'none';
             renderizarMenu();
         }

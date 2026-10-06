@@ -565,20 +565,21 @@ def registro():
                     ''', (num_str, nome_t, preco_t, andar_val, hotel_id))
                     contador_quarto += 1
 
+            ensure_subscription_for_hotel(cursor,hotel_id)
             conn.commit()
             conn.close()
-            return render_template_string(LOGIN_TEMPLATE, sucesso="Hotel e Usuário cadastrados com sucesso! Faça seu login.")
+            return render_template_string(LOGIN_TEMPLATE, sucesso="Hotel e Usuário cadastrados com sucesso! Faça seu login.",csrf_token=csrf_token())
 
         except Exception as e:
             conn.rollback()
             conn.close()
             return render_template_string(REGISTER_TEMPLATE, erro=f'Erro interno no cadastro: {str(e)}')
 
-    return render_template_string(REGISTER_TEMPLATE)
+    return render_template_string(REGISTER_TEMPLATE,csrf_token=csrf_token())
 
 @app.route('/logout')
 def logout():
-    session.pop('user', None)
+    session.clear()
     return redirect(url_for('login'))
 
 @app.route('/dashboard')

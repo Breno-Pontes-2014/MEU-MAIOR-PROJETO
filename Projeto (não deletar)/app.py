@@ -426,238 +426,310 @@ def headers_seguros(response):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
+def ensure_servicos_padrao(cursor, hotel_id):
+    padrao = [
+        ('Toalha extra','Quarto',10.00,'unidade'),
+        ('Água mineral','A&B',5.00,'unidade'),
+        ('Café da manhã','A&B',25.00,'pessoa'),
+        ('Lavanderia','Lavanderia',20.00,'peça'),
+        ('Transfer','Transporte',80.00,'trajeto'),
+        ('Almoço','A&B',35.00,'pessoa'),
+        ('Jantar','A&B',35.00,'pessoa'),
+        ('Outros','Diversos',0.00,'unidade')
+    ]
+    for nome,categoria,preco,unidade in padrao:
+        if not cursor.execute('SELECT id FROM servicos WHERE hotel_id=? AND nome=? LIMIT 1',(hotel_id,nome)).fetchone():
+            cursor.execute('INSERT INTO servicos (hotel_id,nome,categoria,preco,unidade,ativo) VALUES (?,?,?,?,?,1)',(hotel_id,nome,categoria,preco,unidade))
+
+def ensure_platform_admin(cursor):
+    username=os.getenv('SAAS_ADMIN_INITIAL_USERNAME','').strip()
+    password=os.getenv('SAAS_ADMIN_INITIAL_PASSWORD','')
+    if not username or not password:
+        return
+    if cursor.execute('SELECT id FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone():
+        return
+    erro=validate_password(password)
+    if erro:
+        raise RuntimeError('SAAS_ADMIN_INITIAL_PASSWORD não atende à política de segurança.')
+    cursor.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,ativo) VALUES (?,?,?,?,?,1)',
+                   (username,username,generate_password_hash(password,method='pbkdf2:sha256'),'platform_admin',None))
+
 def init_db():
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    # Tabela de Hoteis (Corrigido: adicionado 'local')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS hoteis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            data_cadastro TEXT NOT NULL,
-            local TEXT
-        )
-    ''')
-
-    # Tabela de Usuários vinculada ao hotel
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-    
+    conn=get_db()
+    cursor=conn.cursor()
     try:
-        cursor.execute("ALTER TABLE usuarios ADD COLUMN hotel_id INTEGER")
-    except Exception:
-        pass
-
-    # Nova Tabela de Tipos de Quarto (Faltava no init_db original)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tipos_quarto (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            preco_diaria REAL NOT NULL,
-            hotel_id INTEGER,
-            ativo INTEGER DEFAULT 1,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Quartos (Corrigido: UNIQUE removido do 'numero' globalmente, adicionado 'andar' e 'hotel_id')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS quartos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            numero TEXT NOT NULL,
-            tipo TEXT NOT NULL,
-            preco_diaria REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT 'DISPONIVEL',
-            andar INTEGER,
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Hóspedes
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS hospedes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            documento TEXT,
-            telefone TEXT,
-            email TEXT,
-            observacoes TEXT,
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Faixas Etárias
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS faixas_etarias (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            idade_min INTEGER NOT NULL,
-            idade_max INTEGER NOT NULL,
-            valor_adicional REAL NOT NULL DEFAULT 0.0,
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-    
-    try:
-        cursor.execute("ALTER TABLE faixas_etarias ADD COLUMN valor_adicional REAL NOT NULL DEFAULT 0.0")
-    except Exception:
-        pass
-
-    # Tabela de Reservas
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reservas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hospede_id INTEGER,
-            quarto_numero TEXT,
-            check_in TEXT NOT NULL,
-            check_out TEXT NOT NULL,
-            detalhes_pessoas TEXT,
-            diarias INTEGER NOT NULL DEFAULT 1,
-            status TEXT NOT NULL DEFAULT 'CONFIRMADA',
-            valor_total REAL,
-            status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Estoque
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS estoque (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item TEXT NOT NULL,
-            categoria TEXT NOT NULL,
-            quantidade INTEGER NOT NULL DEFAULT 0,
-            preco_unitario REAL NOT NULL DEFAULT 0.0,
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Fluxo de Caixa
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS fluxo_caixa (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tipo TEXT NOT NULL,
-            descricao TEXT NOT NULL,
-            valor REAL NOT NULL,
-            categoria TEXT NOT NULL,
-            data TEXT NOT NULL,
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Tabela de Ordens de Serviço
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ordens_servico (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            quarto TEXT NOT NULL,
-            tipo TEXT NOT NULL,
-            descricao TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'PENDENTE',
-            hotel_id INTEGER,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Insere usuário Admin Padrão
-    cursor.execute('SELECT * FROM usuarios WHERE username = ?', ('admin',))
-    if not cursor.fetchone():
-        hashed_pw = generate_password_hash('admin123', method='pbkdf2:sha256')
-        cursor.execute('INSERT INTO usuarios (username, password, role) VALUES (?, ?, ?)',
-                       ('admin', hashed_pw, 'admin'))
-
-    # Configurações de integrações por hotel.
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS hotel_integracoes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hotel_id INTEGER NOT NULL UNIQUE,
-            booking_url TEXT,
-            airbnb_url TEXT,
-            expedia_url TEXT,
-            hoteis_url TEXT,
-            website_url TEXT,
-            maps_place_id TEXT,
-            maps_url TEXT,
-            maps_nome TEXT,
-            endereco TEXT,
-            latitude REAL,
-            longitude REAL,
-            atualizado_em TEXT NOT NULL,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-
-    # Registro idempotente de Webhooks recebidos.
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS webhook_eventos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            provider TEXT NOT NULL,
-            event_id TEXT NOT NULL UNIQUE,
-            event_type TEXT,
-            hotel_id INTEGER,
-            payload TEXT NOT NULL,
-            recebido_em TEXT NOT NULL,
-            processado_em TEXT,
-            status TEXT NOT NULL DEFAULT 'RECEBIDO',
-            erro TEXT,
-            FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
-        )
-    ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_webhook_hotel_id ON webhook_eventos(hotel_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_webhook_event_id ON webhook_eventos(event_id)')
-
-    # Migração multi-hotel de dados já existentes.
-    add_column_if_missing(cursor,'usuarios','hotel_id INTEGER')
-    add_column_if_missing(cursor,'tipos_quarto','hotel_id INTEGER')
-    add_column_if_missing(cursor,'quartos','hotel_id INTEGER')
-    add_column_if_missing(cursor,'hospedes','hotel_id INTEGER')
-    add_column_if_missing(cursor,'faixas_etarias','hotel_id INTEGER')
-    add_column_if_missing(cursor,'reservas','hotel_id INTEGER')
-    add_column_if_missing(cursor,'estoque','hotel_id INTEGER')
-    add_column_if_missing(cursor,'fluxo_caixa','hotel_id INTEGER')
-    add_column_if_missing(cursor,'ordens_servico','hotel_id INTEGER')
-    add_column_if_missing(cursor,'assinaturas','checkout_externo TEXT')
-
-    ensure_planos(cursor)
-    ensure_assinaturas(cursor)
-
-    default_hotel_id = get_or_create_default_hotel(cursor)
-    for table in TENANT_TABLES:
-        cursor.execute(f'UPDATE {table} SET hotel_id = ? WHERE hotel_id IS NULL',(default_hotel_id,))
-    cursor.execute('UPDATE usuarios SET hotel_id = ? WHERE hotel_id IS NULL',(default_hotel_id,))
-
-    for hotel in cursor.execute('SELECT id FROM hoteis ORDER BY id').fetchall():
-        hid=hotel['id']
-        qtd=cursor.execute('SELECT COUNT(*) AS total FROM faixas_etarias WHERE hotel_id = ?',(hid,)).fetchone()['total']
-        if qtd == 0:
-            cursor.executemany(
-                'INSERT INTO faixas_etarias (nome, idade_min, idade_max, valor_adicional, hotel_id) VALUES (?, ?, ?, ?, ?)',
-                [('Criança (Até 11 anos)',0,11,0.0,hid),('Adulto Padrão',12,59,0.0,hid),('Idoso',60,120,0.0,hid)]
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hoteis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                data_cadastro TEXT NOT NULL,
+                local TEXT,
+                bloqueado INTEGER NOT NULL DEFAULT 0,
+                bloqueado_em TEXT,
+                bloqueio_motivo TEXT
             )
-        ensure_subscription_for_hotel(cursor,hid)
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                nome TEXT,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'recepcao',
+                hotel_id INTEGER,
+                email TEXT,
+                ativo INTEGER NOT NULL DEFAULT 1,
+                ultimo_login TEXT,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tipos_quarto (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                preco_diaria REAL NOT NULL,
+                hotel_id INTEGER,
+                ativo INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS quartos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                numero TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                preco_diaria REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'DISPONIVEL',
+                andar INTEGER,
+                hotel_id INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hospedes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                documento TEXT,
+                telefone TEXT,
+                email TEXT,
+                observacoes TEXT,
+                hotel_id INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS faixas_etarias (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                idade_min INTEGER NOT NULL,
+                idade_max INTEGER NOT NULL,
+                valor_adicional REAL NOT NULL DEFAULT 0.0,
+                hotel_id INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reservas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hospede_id INTEGER,
+                quarto_numero TEXT,
+                check_in TEXT NOT NULL,
+                check_out TEXT NOT NULL,
+                detalhes_pessoas TEXT,
+                diarias INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'CONFIRMADA',
+                valor_total REAL,
+                status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
+                hotel_id INTEGER,
+                pago_em TEXT,
+                pago_por INTEGER,
+                financeiro_id INTEGER,
+                criada_por INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS estoque (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                quantidade INTEGER NOT NULL DEFAULT 0,
+                preco_unitario REAL NOT NULL DEFAULT 0.0,
+                hotel_id INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS fluxo_caixa (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo TEXT NOT NULL,
+                descricao TEXT NOT NULL,
+                valor REAL NOT NULL,
+                categoria TEXT NOT NULL,
+                data TEXT NOT NULL,
+                hotel_id INTEGER,
+                origem_tipo TEXT,
+                origem_id INTEGER,
+                forma_pagamento TEXT,
+                criado_por INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ordens_servico (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quarto TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                descricao TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDENTE',
+                hotel_id INTEGER,
+                quarto_id INTEGER,
+                hospede_id INTEGER,
+                solicitante_id INTEGER,
+                responsavel_id INTEGER,
+                prioridade TEXT NOT NULL DEFAULT 'NORMAL',
+                aberta_em TEXT,
+                concluida_em TEXT,
+                valor REAL NOT NULL DEFAULT 0,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hotel_integracoes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL UNIQUE,
+                booking_url TEXT,
+                airbnb_url TEXT,
+                expedia_url TEXT,
+                hoteis_url TEXT,
+                website_url TEXT,
+                maps_place_id TEXT,
+                maps_url TEXT,
+                maps_nome TEXT,
+                endereco TEXT,
+                latitude REAL,
+                longitude REAL,
+                atualizado_em TEXT NOT NULL,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS webhook_eventos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider TEXT NOT NULL,
+                event_id TEXT NOT NULL UNIQUE,
+                event_type TEXT,
+                hotel_id INTEGER,
+                payload TEXT NOT NULL,
+                recebido_em TEXT NOT NULL,
+                processado_em TEXT,
+                status TEXT NOT NULL DEFAULT 'RECEBIDO',
+                erro TEXT,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS planos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT UNIQUE NOT NULL,
+                preco_mensal REAL NOT NULL DEFAULT 0,
+                limite_quartos INTEGER NOT NULL DEFAULT 10,
+                limite_usuarios INTEGER NOT NULL DEFAULT 2,
+                dias_ciclo INTEGER NOT NULL DEFAULT 30,
+                descricao TEXT,
+                ativo INTEGER NOT NULL DEFAULT 1
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS assinaturas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                plano_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'TESTE',
+                inicio TEXT NOT NULL,
+                periodo_fim TEXT,
+                trial_ate TEXT,
+                gateway TEXT,
+                cliente_externo TEXT,
+                assinatura_externa TEXT,
+                checkout_externo TEXT,
+                atualizado_em TEXT NOT NULL,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id),
+                FOREIGN KEY (plano_id) REFERENCES planos(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS servicos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL DEFAULT 'Diversos',
+                preco REAL NOT NULL DEFAULT 0,
+                unidade TEXT NOT NULL DEFAULT 'unidade',
+                ativo INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pedidos_hospede (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                reserva_id INTEGER,
+                quarto_id INTEGER,
+                hospede_id INTEGER,
+                servico_id INTEGER,
+                item TEXT NOT NULL,
+                descricao TEXT,
+                quantidade REAL NOT NULL DEFAULT 1,
+                preco_unitario REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'ABERTO',
+                status_pagamento TEXT NOT NULL DEFAULT 'PENDENTE',
+                solicitado_em TEXT NOT NULL,
+                criado_por INTEGER,
+                pago_em TEXT,
+                pago_por INTEGER,
+                financeiro_id INTEGER,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
 
-    for table in TENANT_TABLES:
-        cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_hotel_id ON {table}(hotel_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_usuarios_hotel_id ON usuarios(hotel_id)')
+        for table,coldef in [
+            ('hoteis','bloqueado INTEGER NOT NULL DEFAULT 0'),('hoteis','bloqueado_em TEXT'),('hoteis','bloqueio_motivo TEXT'),
+            ('usuarios','nome TEXT'),('usuarios','email TEXT'),('usuarios','ativo INTEGER NOT NULL DEFAULT 1'),('usuarios','ultimo_login TEXT'),
+            ('reservas','pago_em TEXT'),('reservas','pago_por INTEGER'),('reservas','financeiro_id INTEGER'),('reservas','criada_por INTEGER'),
+            ('fluxo_caixa','origem_tipo TEXT'),('fluxo_caixa','origem_id INTEGER'),('fluxo_caixa','forma_pagamento TEXT'),('fluxo_caixa','criado_por INTEGER'),
+            ('ordens_servico','quarto_id INTEGER'),('ordens_servico','hospede_id INTEGER'),('ordens_servico','solicitante_id INTEGER'),('ordens_servico','responsavel_id INTEGER'),
+            ('ordens_servico','prioridade TEXT NOT NULL DEFAULT \'NORMAL\''),('ordens_servico','aberta_em TEXT'),('ordens_servico','concluida_em TEXT'),('ordens_servico','valor REAL NOT NULL DEFAULT 0'),
+            ('assinaturas','checkout_externo TEXT')
+        ]:
+            try:
+                add_column_if_missing(cursor,table,coldef)
+            except Exception:
+                pass
 
-    conn.commit()
-    conn.close()
+        ensure_planos(cursor)
+        ensure_platform_admin(cursor)
 
-def login_required(f):
+        hotels=cursor.execute('SELECT id FROM hoteis ORDER BY id').fetchall()
+        for row in hotels:
+            hid=row['id']
+            qtd=cursor.execute('SELECT COUNT(*) AS total FROM faixas_etarias WHERE hotel_id=?',(hid,)).fetchone()['total']
+            if qtd==0:
+                cursor.executemany('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',
+                                   [('Criança (até 11 anos)',0,11,0.0,hid),('Adulto',12,59,0.0,hid),('Idoso',60,120,0.0,hid)])
+            ensure_subscription_for_hotel(cursor,hid)
+            ensure_servicos_padrao(cursor,hid)
+
+        for table in TENANT_TABLES + ['servicos','pedidos_hospede']:
+            cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_hotel_id ON {table}(hotel_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_usuarios_hotel_id ON usuarios(hotel_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_reservas_quarto_datas ON reservas(hotel_id,quarto_numero,check_in,check_out)')
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_servicos_hotel_nome ON servicos(hotel_id,nome)')
+        conn.commit()
+    finally:
+        conn.close()
+
+def login_required(f):def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:

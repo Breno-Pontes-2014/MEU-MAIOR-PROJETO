@@ -1263,111 +1263,180 @@ def cancelar_reserva(current_user,role,rid):
         sincronizar_status_quartos(conn,g.hotel_id); conn.commit(); return jsonify({'mensagem':'Reserva cancelada.'}),200
     finally: conn.close()
 
-@app.route('/api/estoque', methods=['GET', 'POST'])
+@app.route('/api/estoque',methods=['GET','POST'])
 @token_required
-def gerenciar_estoque(current_user, role):
-    conn = get_db()
-    cursor = conn.cursor()
-    if request.method == 'POST':
-        data = request.get_json() or {}
-        cursor.execute('INSERT INTO estoque (item, categoria, quantidade, preco_unitario, hotel_id) VALUES (?, ?, ?, ?, ?)',
-                       (data.get('item'), data.get('categoria'), int(data.get('quantidade', 0)), float(data.get('preco_unitario', 0.0)), g.hotel_id))
-        conn.commit()
-        conn.close()
-        return jsonify({'mensagem': 'Item adicionado!'}), 201
-    
-    itens = [dict(row) for row in cursor.execute('SELECT * FROM estoque WHERE hotel_id=? ORDER BY item',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(itens), 200
+def gerenciar_estoque(current_user,role):
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            data=request.get_json(silent=True) or {}
+            item=str(data.get('item') or '').strip()[:120]; categoria=str(data.get('categoria') or 'Geral').strip()[:80]
+            try: quantidade=int(data.get('quantidade',0)); preco=float(data.get('preco_unitario',0))
+            except (TypeError,ValueError): return jsonify({'erro':'Quantidade ou preço inválido.'}),400
+            if not item or quantidade<0 or preco<0: return jsonify({'erro':'Informe dados válidos.'}),400
+            cur=conn.cursor(); cur.execute('INSERT INTO estoque (item,categoria,quantidade,preco_unitario,hotel_id) VALUES (?,?,?,?,?)',(item,categoria,quantidade,preco,g.hotel_id)); conn.commit()
+            return jsonify({'mensagem':'Item adicionado.','id':cur.lastrowid}),201
+        return jsonify([dict(x) for x in conn.execute('SELECT * FROM estoque WHERE hotel_id=? ORDER BY item',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
 
-@app.route('/api/estoque/<int:item_id>', methods=['DELETE'])
+@app.route('/api/estoque/<int:item_id>',methods=['PUT'])
 @token_required
-def deletar_estoque(current_user, role, item_id):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM estoque WHERE id = ? AND hotel_id=?', (item_id,g.hotel_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Removido!'}), 200
+def editar_estoque(current_user,role,item_id):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        row=conn.execute('SELECT * FROM estoque WHERE id=? AND hotel_id=?',(item_id,g.hotel_id)).fetchone()
+        if not row: return jsonify({'erro':'Item não encontrado.'}),404
+        try: qtd=int(data.get('quantidade',row['quantidade'])); preco=float(data.get('preco_unitario',row['preco_unitario']))
+        except (TypeError,ValueError): return jsonify({'erro':'Valores inválidos.'}),400
+        item=str(data.get('item',row['item']) or '').strip()[:120]; cat=str(data.get('categoria',row['categoria']) or '').strip()[:80]
+        if not item or qtd<0 or preco<0: return jsonify({'erro':'Revise item, quantidade e preço.'}),400
+        conn.execute('UPDATE estoque SET item=?,categoria=?,quantidade=?,preco_unitario=? WHERE id=? AND hotel_id=?',(item,cat,qtd,preco,item_id,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Item atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/estoque/<int:item_id>',methods=['DELETE'])
+@token_required
+def deletar_estoque(current_user,role,item_id):
+    conn=get_db()
+    try:
+        cur=conn.cursor(); cur.execute('DELETE FROM estoque WHERE id=? AND hotel_id=?',(item_id,g.hotel_id))
+        if cur.rowcount==0: return jsonify({'erro':'Item não encontrado.'}),404
+        conn.commit(); return jsonify({'mensagem':'Item removido.'}),200
+    finally: conn.close()
+
+@app.route('/api/financeiro',methods=['GET','POST'])
+@token_required
+def gerenciar_financeiro(current_user,role):
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            data=request.get_json(silent=True) or {}
+            tipo=str(data.get('tipo') or 'ENTRADA').upper(); desc=str(data.get('descricao') or '').strip()[:200]; cat=str(data.get('categoria') or 'Geral').strip()[:80]
+            try: valor=float(data.get('valor',0))
+            except (TypeError,ValueError): return jsonify({'erro':'Valor inválido.'}),400
+            if tipo not in ('ENTRADA','SAIDA') or not desc or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
+            cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,criado_por) VALUES (?,?,?,?,?,?,?,?)',(tipo,desc,valor,cat,str(data.get('data') or datetime.date.today().isoformat()),g.hotel_id,None,g.current_user_id)); conn.commit()
+            return jsonify({'mensagem':'Lançamento realizado.','id':cur.lastrowid}),201
+        return jsonify([dict(x) for x in conn.execute('SELECT * FROM fluxo_caixa WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
+
+@app.route('/api/financeiro/<int:fid>',methods=['PUT'])
+@token_required
+def editar_financeiro(current_user,role,fid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        row=conn.execute('SELECT * FROM fluxo_caixa WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone()
+        if not row: return jsonify({'erro':'Lançamento não encontrado.'}),404
+        if row['origem_tipo']: return jsonify({'erro':'Este lançamento é automático e deve ser alterado pela reserva ou pedido de origem.'}),409
+        tipo=str(data.get('tipo',row['tipo']) or '').upper(); desc=str(data.get('descricao',row['descricao']) or '').strip()[:200]; cat=str(data.get('categoria',row['categoria']) or '').strip()[:80]
+        try: valor=float(data.get('valor',row['valor']))
+        except (TypeError,ValueError): return jsonify({'erro':'Valor inválido.'}),400
+        if tipo not in ('ENTRADA','SAIDA') or not desc or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
+        conn.execute('UPDATE fluxo_caixa SET tipo=?,descricao=?,valor=?,categoria=? WHERE id=? AND hotel_id=?',(tipo,desc,valor,cat,fid,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Lançamento atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/ordens',methods=['GET','POST'])
+@token_required
+def gerenciar_ordens(current_user,role):
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            data=request.get_json(silent=True) or {}
+            tipo=str(data.get('tipo') or 'Outros').strip()[:100]; desc=str(data.get('descricao') or '').strip()[:1000]; prioridade=str(data.get('prioridade') or 'NORMAL').upper()
+            if prioridade not in ('BAIXA','NORMAL','ALTA','URGENTE'): prioridade='NORMAL'
+            try: quarto_id=int(data.get('quarto_id'))
+            except (TypeError,ValueError): return jsonify({'erro':'Selecione um quarto válido.'}),400
+            q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(quarto_id,g.hotel_id)).fetchone()
+            if not q: return jsonify({'erro':'Quarto não pertence ao hotel.'}),403
+            hospede_id=data.get('hospede_id')
+            if hospede_id not in (None,''):
+                try: hospede_id=int(hospede_id)
+                except (TypeError,ValueError): return jsonify({'erro':'Hóspede inválido.'}),400
+                if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede não pertence ao hotel.'}),403
+            responsavel_id=data.get('responsavel_id')
+            if responsavel_id not in (None,''):
+                try: responsavel_id=int(responsavel_id)
+                except (TypeError,ValueError): return jsonify({'erro':'Responsável inválido.'}),400
+                if not conn.execute("SELECT id FROM usuarios WHERE id=? AND hotel_id=? AND ativo=1",(responsavel_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Responsável inválido.'}),400
+            if not tipo or not desc: return jsonify({'erro':'Tipo e descrição são obrigatórios.'}),400
+            cur=conn.cursor(); now=datetime.datetime.utcnow().isoformat()
+            cur.execute('INSERT INTO ordens_servico (quarto,tipo,descricao,status,hotel_id,quarto_id,hospede_id,solicitante_id,responsavel_id,prioridade,aberta_em) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                        (q['numero'],tipo,desc,'PENDENTE',g.hotel_id,quarto_id,hospede_id,g.current_user_id,responsavel_id,prioridade,now))
+            oid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Ordem de serviço criada.','id':oid}),201
+        rows=conn.execute('''
+            SELECT o.*,h.nome AS hospede_nome,u.nome AS responsavel_nome,sol.nome AS solicitante_nome
+            FROM ordens_servico o
+            LEFT JOIN hospedes h ON h.id=o.hospede_id AND h.hotel_id=o.hotel_id
+            LEFT JOIN usuarios u ON u.id=o.responsavel_id AND u.hotel_id=o.hotel_id
+            LEFT JOIN usuarios sol ON sol.id=o.solicitante_id AND sol.hotel_id=o.hotel_id
+            WHERE o.hotel_id=? ORDER BY CASE o.prioridade WHEN 'URGENTE' THEN 1 WHEN 'ALTA' THEN 2 WHEN 'NORMAL' THEN 3 ELSE 4 END,o.id DESC
+        ''',(g.hotel_id,)).fetchall()
+        return jsonify([dict(x) for x in rows]),200
+    finally: conn.close()
+
+@app.route('/api/ordens/<int:oid>/status',methods=['PUT'])
+@token_required
+def atualizar_ordem(current_user,role,oid):
+    data=request.get_json(silent=True) or {}; status=str(data.get('status','CONCLUIDA')).upper()
+    if status not in ('PENDENTE','EM_ANDAMENTO','CONCLUIDA','CANCELADA'): return jsonify({'erro':'Status inválido.'}),400
+    conn=get_db()
+    try:
+        if not conn.execute('SELECT id FROM ordens_servico WHERE id=? AND hotel_id=?',(oid,g.hotel_id)).fetchone(): return jsonify({'erro':'Ordem não encontrada.'}),404
+        concluida=datetime.datetime.utcnow().isoformat() if status=='CONCLUIDA' else None
+        conn.execute('UPDATE ordens_servico SET status=?,concluida_em=? WHERE id=? AND hotel_id=?',(status,concluida,oid,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Status da OS atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/ordens/<int:oid>',methods=['PUT'])
+@token_required
+def editar_ordem(current_user,role,oid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        o=conn.execute('SELECT * FROM ordens_servico WHERE id=? AND hotel_id=?',(oid,g.hotel_id)).fetchone()
+        if not o: return jsonify({'erro':'Ordem não encontrada.'}),404
+        try: quarto_id=int(data.get('quarto_id',o['quarto_id']))
+        except (TypeError,ValueError): return jsonify({'erro':'Quarto inválido.'}),400
+        q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(quarto_id,g.hotel_id)).fetchone()
+        if not q: return jsonify({'erro':'Quarto inválido.'}),400
+        hospede_id=data.get('hospede_id',o['hospede_id'])
+        if hospede_id not in (None,'') and not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(int(hospede_id),g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede inválido.'}),400
+        resp=data.get('responsavel_id',o['responsavel_id'])
+        if resp not in (None,'') and not conn.execute('SELECT id FROM usuarios WHERE id=? AND hotel_id=? AND ativo=1',(int(resp),g.hotel_id)).fetchone(): return jsonify({'erro':'Responsável inválido.'}),400
+        tipo=str(data.get('tipo',o['tipo']) or '').strip()[:100]; desc=str(data.get('descricao',o['descricao']) or '').strip()[:1000]; prioridade=str(data.get('prioridade',o['prioridade']) or 'NORMAL').upper()
+        if prioridade not in ('BAIXA','NORMAL','ALTA','URGENTE') or not tipo or not desc: return jsonify({'erro':'Revise os dados da OS.'}),400
+        conn.execute('UPDATE ordens_servico SET quarto=?,quarto_id=?,hospede_id=?,tipo=?,descricao=?,prioridade=?,responsavel_id=? WHERE id=? AND hotel_id=?',
+                     (q['numero'],q['id'],int(hospede_id) if hospede_id not in (None,'') else None,tipo,desc,prioridade,int(resp) if resp not in (None,'') else None,oid,g.hotel_id))
+        conn.commit(); return jsonify({'mensagem':'Ordem atualizada.'}),200
+    finally: conn.close()
+
+@app.route('/api/ordens/<int:oid>',methods=['DELETE'])
+@token_required
+def deletar_ordem(current_user,role,oid):
+    conn=get_db()
+    try:
+        cur=conn.cursor(); cur.execute('DELETE FROM ordens_servico WHERE id=? AND hotel_id=?',(oid,g.hotel_id))
+        if cur.rowcount==0: return jsonify({'erro':'Ordem não encontrada.'}),404
+        conn.commit(); return jsonify({'mensagem':'Ordem removida.'}),200
+    finally: conn.close()
+
+@app.route('/api/relatorios',methods=['GET'])
+@token_required
+def relatorios_gerenciais(current_user,role):
+    conn=get_db()
+    try:
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        total=conn.execute('SELECT COUNT(*) AS t FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['t']
+        ocup=conn.execute("SELECT COUNT(*) AS t FROM quartos WHERE hotel_id=? AND status='OCUPADO'",(g.hotel_id,)).fetchone()['t']
+        receita=conn.execute("SELECT COALESCE(SUM(valor_total),0) AS s FROM reservas WHERE hotel_id=? AND status_pagamento='PAGO' AND status<>'CANCELADA'",(g.hotel_id,)).fetchone()['s'] or 0
+        serv=conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND origem_tipo='PEDIDO'",(g.hotel_id,)).fetchone()['s'] or 0
+        diarias=conn.execute("SELECT COALESCE(SUM(diarias),0) AS s FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND status_pagamento='PAGO'",(g.hotel_id,)).fetchone()['s'] or 0
+        ocupacao=round((ocup/total)*100,2) if total else 0; adr=round(float(receita)/float(diarias),2) if diarias else 0; revpar=round(adr*(ocupacao/100),2)
+        return jsonify({'total_quartos':total,'quartos_ocupados':ocup,'taxa_ocupacao':ocupacao,'receita_total':round(float(receita)+float(serv),2),'receita_hospedagem':round(float(receita),2),'receita_servicos':round(float(serv),2),'adr':adr,'revpar':revpar}),200
+    finally: conn.close()
 
 # ==========================================
-# API - FINANCEIRO
-# ==========================================
-@app.route('/api/financeiro', methods=['GET', 'POST'])
-@token_required
-def gerenciar_financeiro(current_user, role):
-    conn = get_db()
-    cursor = conn.cursor()
-    if request.method == 'POST':
-        data = request.get_json() or {}
-        cursor.execute('INSERT INTO fluxo_caixa (tipo, descricao, valor, categoria, data, hotel_id) VALUES (?, ?, ?, ?, ?, ?)',
-                       (data.get('tipo'), data.get('descricao'), float(data.get('valor', 0)), data.get('categoria', 'Geral'), datetime.date.today().isoformat(), g.hotel_id))
-        conn.commit()
-        conn.close()
-        return jsonify({'mensagem': 'Lançado!'}), 201
-
-    lancamentos = [dict(row) for row in cursor.execute('SELECT * FROM fluxo_caixa WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(lancamentos), 200
-
-# ==========================================
-# API - ORDENS DE SERVIÇO
-# ==========================================
-@app.route('/api/ordens', methods=['GET', 'POST'])
-@token_required
-def gerenciar_ordens(current_user, role):
-    conn = get_db()
-    cursor = conn.cursor()
-    if request.method == 'POST':
-        data = request.get_json() or {}
-        cursor.execute('INSERT INTO ordens_servico (quarto, tipo, descricao, status, hotel_id) VALUES (?, ?, ?, ?, ?)',
-                       (data.get('quarto'), data.get('tipo'), data.get('descricao'), 'PENDENTE', g.hotel_id))
-        conn.commit()
-        conn.close()
-        return jsonify({'mensagem': 'OS criada!'}), 201
-
-    ordens = [dict(row) for row in cursor.execute('SELECT * FROM ordens_servico WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]
-    conn.close()
-    return jsonify(ordens), 200
-
-@app.route('/api/ordens/<int:oid>/status', methods=['PUT'])
-@token_required
-def atualizar_ordem(current_user, role, oid):
-    data = request.get_json() or {}
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE ordens_servico SET status = ? WHERE id = ? AND hotel_id=?', (data.get('status', 'CONCLUIDA'), oid,g.hotel_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'mensagem': 'Status atualizado!'}), 200
-
-# ==========================================
-# API - RELATÓRIOS
-# ==========================================
-@app.route('/api/relatorios', methods=['GET'])
-@token_required
-def relatorios_gerenciais(current_user, role):
-    conn = get_db()
-    cursor = conn.cursor()
-    total_quartos = cursor.execute('SELECT COUNT(*) as t FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['t'] or 1
-    quartos_ocupados = cursor.execute("SELECT COUNT(*) as t FROM quartos WHERE status = 'OCUPADO' AND hotel_id=?",(g.hotel_id,)).fetchone()['t']
-    res_receita = cursor.execute("SELECT SUM(valor_total) as s FROM reservas WHERE hotel_id=?",(g.hotel_id,)).fetchone()['s'] or 0.0
-    total_reservas = cursor.execute("SELECT SUM(diarias) as s FROM reservas WHERE hotel_id=?",(g.hotel_id,)).fetchone()['s'] or 1
-
-    taxa_ocupacao = round((quartos_ocupados / total_quartos) * 100, 2)
-    adr = round(res_receita / total_reservas, 2) if total_reservas > 0 else 0.0
-    revpar = round(adr * (taxa_ocupacao / 100), 2)
-
-    conn.close()
-    return jsonify({
-        'total_quartos': total_quartos,
-        'quartos_ocupados': quartos_ocupados,
-        'taxa_ocupacao': taxa_ocupacao,
-        'receita_total': round(res_receita, 2),
-        'adr': adr,
-        'revpar': revpar
-    }), 200
-
+# CHECKOUT ASAAS
 # ==========================================
 # CHECKOUT ASAAS / ASSINATURA RECORRENTE
 # ==========================================

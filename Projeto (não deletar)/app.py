@@ -1914,45 +1914,90 @@ def webhook_asaas():
 # ==========================================
 @app.route('/api/me')
 @token_required
-def api_me(current_user, role):
+def api_me(current_user,role):
     conn=get_db()
     try:
-        hotel=conn.execute('SELECT id,nome,data_cadastro,local FROM hoteis WHERE id=?',(g.hotel_id,)).fetchone()
-        return jsonify({'usuario':{'id':g.current_user_id,'username':g.current_user,'role':g.current_role,'hotel_id':g.hotel_id},
+        hotel=conn.execute('SELECT id,nome,data_cadastro,local,bloqueado,bloqueio_motivo FROM hoteis WHERE id=?',(g.hotel_id,)).fetchone() if g.hotel_id else None
+        return jsonify({'usuario':{'id':g.current_user_id,'username':g.current_user,'nome':g.current_user_name,'role':g.current_role,'role_label':ROLE_LABELS.get(g.current_role,g.current_role),'hotel_id':g.hotel_id},
                         'hotel':dict(hotel) if hotel else None,
-                        'assinatura':get_subscription(conn,g.hotel_id)}),200
-    finally:
-        conn.close()
+                        'assinatura':get_subscription(conn,g.hotel_id) if g.hotel_id else None}),200
+    finally: conn.close()
 
-@app.route('/api/planos')
-def api_planos():
+@app.route('/api/platform/hoteis')
+@token_required
+def platform_hoteis(current_user,role):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
     conn=get_db()
     try:
-        return jsonify([dict(x) for x in conn.execute('SELECT id,nome,preco_mensal,limite_quartos,limite_usuarios,dias_ciclo,descricao FROM planos WHERE ativo=1 ORDER BY preco_mensal,id').fetchall()]),200
-    finally:
-        conn.close()
+        hotels=conn.execute('SELECT * FROM hoteis ORDER BY nome').fetchall()
+        out=[]
+        for h in hotels:
+            admins=conn.execute("SELECT id,nome,username,email,ativo,last_seen FROM (SELECT id,nome,username,email,ativo,ultimo_login AS last_seen FROM usuarios WHERE hotel_id=? AND role='admin') ORDER BY ativo DESC,nome,username",(h['id'],)).fetchall()
+            sub=get_subscription(conn,h['id'])
+            out.append({'id':h['id'],'nome':h['nome'],'local':h['local'],'bloqueado':int(h['bloqueado'] or 0),
+                        'bloqueio_motivo':h['bloqueio_motivo'],'admins':[dict(a) for a in admins],
+                        'assinatura':sub})
+        return jsonify(out),200
+    finally: conn.close()
+
+@app.route('/api/platform/hoteis/<int:hotel_id>/bloqueio',methods=['PUT'])
+@token_required
+def platform_bloquear_hotel(current_user,role,hotel_id):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    data=request.get_json(silent=True) or {}; bloquear=bool(data.get('bloqueado',True))
+    motivo=str(data.get('motivo') or '').strip()[:300] or ('Pagamento pendente' if bloquear else None)
+    conn=get_db()
+    try:
+        h=conn.execute('SELECT id,nome FROM hoteis WHERE id=?',(hotel_id,)).fetchone()
+        if not h: return jsonify({'erro':'Hotel não encontrado.'}),404
+        conn.execute('UPDATE hoteis SET bloqueado=?,bloqueado_em=?,bloqueio_motivo=? WHERE id=?',
+                     (1 if bloquear else 0,datetime.datetime.utcnow().isoformat() if bloquear else None,motivo if bloquear else None,hotel_id))
+        conn.commit()
+        return jsonify({'mensagem':'Hotel bloqueado.' if bloquear else 'Hotel liberado.','hotel_id':hotel_id}),200
+    finally: conn.close()
+
+@app.route('/api/platform/assinaturas/<int:hotel_id>',methods=['PUT'])
+@token_required
+def platform_atualizar_assinatura(hotel_id,current_user,role):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    data=request.get_json(silent=True) or {}
+    try: plano_id=int(data.get('plano_id')); dias=int(data.get('dias',30))
+    except (TypeError,ValueError): return jsonify({'erro':'Plano ou período inválido.'}),400
+    status=str(data.get('status','ATIVA')).upper()
+    if status not in ('ATIVA','TESTE','SUSPENSA','CANCELADA'): return jsonify({'erro':'Status inválido.'}),400
+    if dias<0 or dias>3660: return jsonify({'erro':'Período inválido.'}),400
+    conn=get_db()
+    try:
+        if not conn.execute('SELECT id FROM hoteis WHERE id=?',(hotel_id,)).fetchone(): return jsonify({'erro':'Hotel não encontrado.'}),404
+        plano=conn.execute('SELECT id FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
+        if not plano: return jsonify({'erro':'Plano não encontrado.'}),404
+        hoje=datetime.date.today(); fim=hoje+datetime.timedelta(days=dias)
+        cur=conn.cursor()
+        cur.execute('INSERT INTO assinaturas (hotel_id,plano_id,status,inicio,periodo_fim,trial_ate,gateway,atualizado_em) VALUES (?,?,?,?,?,?,?,?)',
+                    (hotel_id,plano_id,status,hoje.isoformat(),fim.isoformat() if status!='CANCELADA' else None,fim.isoformat() if status=='TESTE' else None,'plataforma',datetime.datetime.utcnow().isoformat()))
+        conn.commit()
+        return jsonify({'mensagem':'Assinatura atualizada.','hotel_id':hotel_id}),200
+    finally: conn.close()
 
 @app.route('/api/assinatura')
 @token_required
-def api_assinatura(current_user, role):
+def api_assinatura(current_user,role):
     conn=get_db()
     try:
-        return jsonify(get_subscription(conn,g.hotel_id) or {'ativo':False,'status':'SEM_ASSINATURA'}),200
-    finally:
-        conn.close()
+        return jsonify(get_subscription(conn,g.hotel_id) if g.hotel_id else {'ativo':False,'status':'PLATAFORMA'}),200
+    finally: conn.close()
 
 @app.route('/api/assinatura/limites')
 @token_required
-def api_assinatura_limites(current_user, role):
+def api_assinatura_limites(current_user,role):
+    if not g.hotel_id: return jsonify({'plano':None,'quartos':{'usados':0,'limite':None},'usuarios':{'usados':0,'limite':None}}),200
     conn=get_db()
     try:
         sub=get_subscription(conn,g.hotel_id)
         q=conn.execute('SELECT COUNT(*) total FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['total']
-        u=conn.execute('SELECT COUNT(*) total FROM usuarios WHERE hotel_id=?',(g.hotel_id,)).fetchone()['total']
-        return jsonify({'plano':sub,'quartos':{'usados':q,'limite':sub['limite_quartos'] if sub else 0},
-                        'usuarios':{'usados':u,'limite':sub['limite_usuarios'] if sub else 0}}),200
-    finally:
-        conn.close()
+        u=conn.execute('SELECT COUNT(*) total FROM usuarios WHERE hotel_id=? AND ativo=1',(g.hotel_id,)).fetchone()['total']
+        return jsonify({'plano':sub,'quartos':{'usados':q,'limite':sub['limite_quartos'] if sub else 0},'usuarios':{'usados':u,'limite':sub['limite_usuarios'] if sub else 0}}),200
+    finally: conn.close()
 
 @app.route('/api/assinatura/solicitar',methods=['POST'])
 @token_required
@@ -1975,31 +2020,7 @@ def api_solicitar_plano(current_user, role):
     finally:
         conn.close()
 
-@app.route('/api/admin/assinaturas/<int:hotel_id>',methods=['PUT'])
-def api_admin_assinatura(hotel_id):
-    esperado=os.getenv('SAAS_ADMIN_TOKEN','').strip()
-    fornecido=request.headers.get('X-SaaS-Admin-Token','').strip()
-    if not esperado or not fornecido or not secrets.compare_digest(esperado,fornecido):
-        return jsonify({'erro':'Não autorizado.'}),401
-    data=request.get_json(silent=True) or {}
-    conn=get_db()
-    try:
-        plano_id=int(data.get('plano_id'))
-        status=str(data.get('status','ATIVA')).upper()
-        if status not in ('ATIVA','TESTE','SUSPENSA','CANCELADA'):
-            return jsonify({'erro':'Status inválido.'}),400
-        plano=conn.execute('SELECT id,dias_ciclo FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
-        if not plano:
-            return jsonify({'erro':'Plano inválido.'}),400
-        dias=int(data.get('dias',plano['dias_ciclo']))
-        hoje=datetime.date.today()
-        fim=hoje+datetime.timedelta(days=dias)
-        conn.execute('INSERT INTO assinaturas (hotel_id,plano_id,status,inicio,periodo_fim,trial_ate,gateway,atualizado_em) VALUES (?,?,?,?,?,?,?,?)',
-                     (hotel_id,plano_id,status,hoje.isoformat(),fim.isoformat(),fim.isoformat() if status=='TESTE' else None,'plataforma',datetime.datetime.utcnow().isoformat()))
-        conn.commit()
-        return jsonify({'mensagem':'Assinatura atualizada.','hotel_id':hotel_id}),200
-    finally:
-        conn.close()
+
 
 # ==========================================
 # TEMPLATES HTML

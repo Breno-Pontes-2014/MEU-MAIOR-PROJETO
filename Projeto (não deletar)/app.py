@@ -1977,7 +1977,7 @@ def platform_bloquear_hotel(current_user,role,hotel_id):
 
 @app.route('/api/platform/assinaturas/<int:hotel_id>',methods=['PUT'])
 @token_required
-def platform_atualizar_assinatura(hotel_id,current_user,role):
+def platform_atualizar_assinatura(current_user,role,hotel_id):
     if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
     data=request.get_json(silent=True) or {}
     try: plano_id=int(data.get('plano_id')); dias=int(data.get('dias',30))

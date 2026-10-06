@@ -570,6 +570,7 @@ def init_db():
     add_column_if_missing(cursor,'estoque','hotel_id INTEGER')
     add_column_if_missing(cursor,'fluxo_caixa','hotel_id INTEGER')
     add_column_if_missing(cursor,'ordens_servico','hotel_id INTEGER')
+    add_column_if_missing(cursor,'assinaturas','checkout_externo TEXT')
 
     ensure_planos(cursor)
     ensure_assinaturas(cursor)
@@ -1102,6 +1103,97 @@ def relatorios_gerenciais(current_user, role):
         'adr': adr,
         'revpar': revpar
     }), 200
+
+# ==========================================
+# CHECKOUT ASAAS / ASSINATURA RECORRENTE
+# ==========================================
+def asaas_base_url():
+    ambiente=os.getenv('ASAAS_ENV','sandbox').strip().lower()
+    return os.getenv('ASAAS_BASE_URL','').strip().rstrip('/') or ('https://api.asaas.com/v3' if ambiente=='producao' else 'https://api-sandbox.asaas.com/v3')
+
+@app.route('/api/assinatura/checkout', methods=['POST'])
+@token_required
+def criar_checkout_asaas(current_user, role):
+    if not require_admin_role():
+        return jsonify({'erro':'Apenas o administrador do hotel pode contratar um plano.'}),403
+    api_key=os.getenv('ASAAS_API_KEY','').strip()
+    public_url=os.getenv('SAAS_PUBLIC_URL','').strip().rstrip('/')
+    if not api_key or not public_url:
+        return jsonify({'erro':'Configure ASAAS_API_KEY e SAAS_PUBLIC_URL no ambiente do servidor.'}),503
+
+    data=request.get_json(silent=True) or {}
+    try:
+        plano_id=int(data.get('plano_id'))
+    except (TypeError,ValueError):
+        return jsonify({'erro':'Plano inválido.'}),400
+
+    conn=get_db()
+    try:
+        plano=conn.execute('SELECT * FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
+        if not plano: return jsonify({'erro':'Plano não encontrado.'}),404
+        if float(plano['preco_mensal']) <= 0:
+            return jsonify({'erro':'Este plano não exige checkout pago.'}),400
+
+        referencia=f'hotel:{g.hotel_id}:plan:{plano_id}:{secrets.token_urlsafe(10)}'
+        payload={
+            'billingTypes':['PIX','CREDIT_CARD'],
+            'chargeTypes':['RECURRENT'],
+            'minutesToExpire':1440,
+            'externalReference':referencia,
+            'callback':{
+                'successUrl':public_url+'/assinatura/sucesso',
+                'cancelUrl':public_url+'/assinatura/cancelada',
+                'expiredUrl':public_url+'/assinatura/expirada'
+            },
+            'items':[{
+                'name':plano['nome'],
+                'description':plano['descricao'] or 'Assinatura Hotel Master',
+                'quantity':1,
+                'value':float(plano['preco_mensal'])
+            }],
+            'subscription':{
+                'cycle':'MONTHLY',
+                'nextDueDate':(datetime.date.today()+datetime.timedelta(days=1)).isoformat()
+            }
+        }
+
+        req=urllib.request.Request(
+            asaas_base_url()+'/checkouts',
+            data=json.dumps(payload).encode('utf-8'),
+            method='POST',
+            headers={
+                'Content-Type':'application/json',
+                'User-Agent':'HotelMasterSaaS/1.0',
+                'access_token':api_key
+            }
+        )
+        try:
+            with urllib.request.urlopen(req,timeout=15) as response:
+                body=json.loads(response.read().decode('utf-8'))
+        except Exception:
+            return jsonify({'erro':'Não foi possível criar o Checkout Asaas. Verifique ambiente e credenciais.'}),502
+
+        checkout_id=body.get('id')
+        checkout_url=body.get('link') or body.get('url')
+        if checkout_id and not checkout_url:
+            checkout_url='https://asaas.com/checkoutSession/show?id='+urllib.parse.quote(str(checkout_id))
+
+        sub=conn.execute('SELECT id FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(g.hotel_id,)).fetchone()
+        if sub:
+            conn.execute('UPDATE assinaturas SET gateway=?,checkout_externo=?,atualizado_em=? WHERE id=?',
+                         ('asaas:'+os.getenv('ASAAS_ENV','sandbox'),str(checkout_id or referencia),datetime.datetime.utcnow().isoformat(),sub['id']))
+            conn.commit()
+
+        return jsonify({'mensagem':'Checkout criado. A assinatura só será liberada após confirmação do pagamento por webhook.','checkout_url':checkout_url,'checkout_id':checkout_id,'referencia':referencia}),200
+    finally:
+        conn.close()
+
+@app.route('/assinatura/<estado>')
+def assinatura_retorno(estado):
+    textos={'sucesso':'Pagamento enviado/confirmado pelo Checkout. O sistema aguardará a confirmação definitiva do webhook.',
+            'cancelada':'O Checkout foi cancelado. Nenhuma assinatura foi ativada por este retorno.',
+            'expirada':'O Checkout expirou. Nenhuma assinatura foi ativada por este retorno.'}
+    return textos.get(estado,'Retorno de assinatura.')
 
 # ==========================================
 # API - INTEGRAÇÕES POR HOTEL

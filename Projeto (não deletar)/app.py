@@ -1435,6 +1435,222 @@ def relatorios_gerenciais(current_user,role):
         return jsonify({'total_quartos':total,'quartos_ocupados':ocup,'taxa_ocupacao':ocupacao,'receita_total':round(float(receita)+float(serv),2),'receita_hospedagem':round(float(receita),2),'receita_servicos':round(float(serv),2),'adr':adr,'revpar':revpar}),200
     finally: conn.close()
 
+def enforce_user_quota(conn,quantidade_nova=1):
+    sub=getattr(g,'subscription',None)
+    if not sub: return True,None
+    usados=conn.execute('SELECT COUNT(*) AS total FROM usuarios WHERE hotel_id=? AND ativo=1',(g.hotel_id,)).fetchone()['total']
+    if usados+quantidade_nova>int(sub['limite_usuarios']):
+        return False,f"Seu plano permite {sub['limite_usuarios']} usuário(s) ativos. Limite atingido."
+    return True,None
+
+def hotel_admin_only(role):
+    return role=='admin' and bool(getattr(g,'hotel_id',None))
+
+@app.route('/api/usuarios',methods=['GET'])
+@token_required
+def listar_usuarios_hotel(current_user,role):
+    if not hotel_admin_only(role): return jsonify({'erro':'Apenas o administrador do hotel pode gerenciar a equipe.'}),403
+    conn=get_db()
+    try:
+        rows=conn.execute('SELECT id,username,nome,role,email,ativo,ultimo_login FROM usuarios WHERE hotel_id=? ORDER BY ativo DESC,nome,username',(g.hotel_id,)).fetchall()
+        return jsonify([dict(x,role_label=ROLE_LABELS.get(x['role'],x['role'])) for x in rows]),200
+    finally: conn.close()
+
+@app.route('/api/usuarios',methods=['POST'])
+@token_required
+def criar_usuario_hotel(current_user,role):
+    if not hotel_admin_only(role): return jsonify({'erro':'Apenas o administrador do hotel pode adicionar perfis.'}),403
+    data=request.get_json(silent=True) or {}
+    username=str(data.get('username') or '').strip()[:80]; nome=str(data.get('nome') or username).strip()[:160]
+    email=str(data.get('email') or '').strip()[:160] or None; senha=str(data.get('password') or '')
+    perfil=str(data.get('role') or 'recepcao').strip()
+    if perfil not in ROLE_LABELS or perfil=='platform_admin': return jsonify({'erro':'Perfil inválido.'}),400
+    if not username or not senha: return jsonify({'erro':'Usuário e senha são obrigatórios.'}),400
+    erro=validate_password(senha)
+    if erro: return jsonify({'erro':erro}),400
+    conn=get_db()
+    try:
+        if conn.execute('SELECT id FROM usuarios WHERE username=?',(username,)).fetchone(): return jsonify({'erro':'Este nome de usuário já está em uso.'}),409
+        ok,mensagem=enforce_user_quota(conn,1)
+        if not ok: return jsonify({'erro':mensagem}),403
+        cur=conn.cursor()
+        cur.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,email,ativo) VALUES (?,?,?,?,?,?,1)',
+                    (username,nome,generate_password_hash(senha,method='pbkdf2:sha256'),perfil,g.hotel_id,email))
+        uid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Usuário criado.','id':uid}),201
+    finally: conn.close()
+
+@app.route('/api/usuarios/<int:uid>',methods=['PUT'])
+@token_required
+def editar_usuario_hotel(current_user,role,uid):
+    if not hotel_admin_only(role): return jsonify({'erro':'Apenas o administrador do hotel pode editar usuários.'}),403
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        u=conn.execute('SELECT * FROM usuarios WHERE id=? AND hotel_id=?',(uid,g.hotel_id)).fetchone()
+        if not u: return jsonify({'erro':'Usuário não encontrado.'}),404
+        novo_nome=str(data.get('nome',u['nome'] or u['username']) or u['username']).strip()[:160]
+        email=str(data.get('email',u['email'] or '') or '').strip()[:160] or None
+        perfil=str(data.get('role',u['role']) or u['role'])
+        ativo=1 if bool(data.get('ativo',u['ativo'])) else 0
+        if perfil not in ROLE_LABELS or perfil=='platform_admin': return jsonify({'erro':'Perfil inválido.'}),400
+        if uid==g.current_user_id and not ativo: return jsonify({'erro':'O administrador atual não pode se bloquear por esta tela.'}),409
+        campos=['nome=?','email=?','role=?','ativo=?']; params=[novo_nome,email,perfil,ativo]
+        senha=data.get('password')
+        if senha not in (None,''):
+            senha_erro=validate_password(str(senha))
+            if senha_erro: return jsonify({'erro':senha_erro}),400
+            campos.append('password=?'); params.append(generate_password_hash(str(senha),method='pbkdf2:sha256'))
+        params.extend([uid,g.hotel_id])
+        conn.execute('UPDATE usuarios SET '+','.join(campos)+' WHERE id=? AND hotel_id=?',tuple(params))
+        conn.commit(); return jsonify({'mensagem':'Usuário atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/usuarios/<int:uid>',methods=['DELETE'])
+@token_required
+def desativar_usuario_hotel(current_user,role,uid):
+    if not hotel_admin_only(role): return jsonify({'erro':'Apenas o administrador do hotel pode bloquear usuários.'}),403
+    if uid==g.current_user_id: return jsonify({'erro':'O administrador atual não pode se bloquear.'}),409
+    conn=get_db()
+    try:
+        cur=conn.cursor(); cur.execute('UPDATE usuarios SET ativo=0 WHERE id=? AND hotel_id=?',(uid,g.hotel_id))
+        if cur.rowcount==0: return jsonify({'erro':'Usuário não encontrado.'}),404
+        conn.commit(); return jsonify({'mensagem':'Usuário bloqueado.'}),200
+    finally: conn.close()
+
+@app.route('/api/servicos',methods=['GET','POST'])
+@token_required
+def listar_servicos(current_user,role):
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            if not can(role,'services.manage'): return jsonify({'erro':'Seu perfil não pode cadastrar serviços.'}),403
+            data=request.get_json(silent=True) or {}
+            nome=str(data.get('nome') or '').strip()[:120]; categoria=str(data.get('categoria') or 'Diversos').strip()[:80]
+            unidade=str(data.get('unidade') or 'unidade').strip()[:30]
+            try: preco=float(data.get('preco',0))
+            except (TypeError,ValueError): return jsonify({'erro':'Preço inválido.'}),400
+            if not nome or preco<0: return jsonify({'erro':'Informe nome e preço válidos.'}),400
+            if conn.execute('SELECT id FROM servicos WHERE hotel_id=? AND nome=?',(g.hotel_id,nome)).fetchone(): return jsonify({'erro':'Já existe um serviço com esse nome.'}),409
+            cur=conn.cursor(); cur.execute('INSERT INTO servicos (hotel_id,nome,categoria,preco,unidade,ativo) VALUES (?,?,?,?,?,1)',(g.hotel_id,nome,categoria,preco,unidade)); conn.commit()
+            return jsonify({'mensagem':'Serviço criado.','id':cur.lastrowid}),201
+        return jsonify([dict(x) for x in conn.execute('SELECT * FROM servicos WHERE hotel_id=? ORDER BY ativo DESC,categoria,nome',(g.hotel_id,)).fetchall()]),200
+    finally: conn.close()
+
+@app.route('/api/servicos/<int:sid>',methods=['PUT'])
+@token_required
+def editar_servico(current_user,role,sid):
+    if not can(role,'services.manage'): return jsonify({'erro':'Seu perfil não pode editar serviços.'}),403
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        s=conn.execute('SELECT * FROM servicos WHERE id=? AND hotel_id=?',(sid,g.hotel_id)).fetchone()
+        if not s: return jsonify({'erro':'Serviço não encontrado.'}),404
+        nome=str(data.get('nome',s['nome']) or '').strip()[:120]; categoria=str(data.get('categoria',s['categoria']) or '').strip()[:80]; unidade=str(data.get('unidade',s['unidade']) or '').strip()[:30]
+        try: preco=float(data.get('preco',s['preco']))
+        except (TypeError,ValueError): return jsonify({'erro':'Preço inválido.'}),400
+        ativo=1 if bool(data.get('ativo',s['ativo'])) else 0
+        if not nome or preco<0: return jsonify({'erro':'Revise nome e preço.'}),400
+        dup=conn.execute('SELECT id FROM servicos WHERE hotel_id=? AND nome=? AND id<>?',(g.hotel_id,nome,sid)).fetchone()
+        if dup: return jsonify({'erro':'Já existe outro serviço com esse nome.'}),409
+        conn.execute('UPDATE servicos SET nome=?,categoria=?,preco=?,unidade=?,ativo=? WHERE id=? AND hotel_id=?',(nome,categoria,preco,unidade,ativo,sid,g.hotel_id)); conn.commit()
+        return jsonify({'mensagem':'Serviço atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/servicos/<int:sid>',methods=['DELETE'])
+@token_required
+def deletar_servico(current_user,role,sid):
+    if not can(role,'services.manage'): return jsonify({'erro':'Seu perfil não pode remover serviços.'}),403
+    conn=get_db()
+    try:
+        cur=conn.cursor(); cur.execute('UPDATE servicos SET ativo=0 WHERE id=? AND hotel_id=?',(sid,g.hotel_id))
+        if cur.rowcount==0: return jsonify({'erro':'Serviço não encontrado.'}),404
+        conn.commit(); return jsonify({'mensagem':'Serviço desativado.'}),200
+    finally: conn.close()
+
+def registrar_entrada_pedido(conn,pedido_id,forma_pagamento='NÃO INFORMADO'):
+    p=conn.execute('SELECT * FROM pedidos_hospede WHERE id=? AND hotel_id=?',(pedido_id,g.hotel_id)).fetchone()
+    if not p: raise ValueError('Pedido não encontrado.')
+    if p['financeiro_id']: return p['financeiro_id']
+    total=round(float(p['quantidade'] or 0)*float(p['preco_unitario'] or 0),2)
+    cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,origem_id,forma_pagamento,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                                    ('ENTRADA',f"Pedido do hóspede - {p['item']} - quarto {p['quarto_id'] or ''}",total,'Serviços',datetime.date.today().isoformat(),g.hotel_id,'PEDIDO',p['id'],forma_pagamento,g.current_user_id))
+    fid=cur.lastrowid
+    conn.execute("UPDATE pedidos_hospede SET status_pagamento='PAGO',pago_em=?,pago_por=?,financeiro_id=? WHERE id=? AND hotel_id=?",(datetime.datetime.utcnow().isoformat(),g.current_user_id,fid,pedido_id,g.hotel_id))
+    return fid
+
+@app.route('/api/pedidos',methods=['GET','POST'])
+@token_required
+def listar_pedidos(current_user,role):
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            data=request.get_json(silent=True) or {}
+            reserva_id=data.get('reserva_id'); quarto_id=data.get('quarto_id'); hospede_id=data.get('hospede_id'); servico_id=data.get('servico_id')
+            try:
+                quarto_id=int(quarto_id)
+            except (TypeError,ValueError): return jsonify({'erro':'Selecione um quarto.'}),400
+            q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(quarto_id,g.hotel_id)).fetchone()
+            if not q: return jsonify({'erro':'Quarto não pertence ao hotel.'}),403
+            if hospede_id not in (None,''):
+                try: hospede_id=int(hospede_id)
+                except (TypeError,ValueError): return jsonify({'erro':'Hóspede inválido.'}),400
+                if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede inválido.'}),403
+            if reserva_id not in (None,''):
+                try: reserva_id=int(reserva_id)
+                except (TypeError,ValueError): reserva_id=None
+                if reserva_id and not conn.execute('SELECT id FROM reservas WHERE id=? AND hotel_id=?',(reserva_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Reserva inválida.'}),400
+            service=None
+            if servico_id not in (None,''):
+                try: servico_id=int(servico_id)
+                except (TypeError,ValueError): return jsonify({'erro':'Serviço inválido.'}),400
+                service=conn.execute('SELECT * FROM servicos WHERE id=? AND hotel_id=? AND ativo=1',(servico_id,g.hotel_id)).fetchone()
+                if not service: return jsonify({'erro':'Serviço não encontrado.'}),404
+            item=str(data.get('item') or (service['nome'] if service else '')).strip()[:120]
+            descricao=str(data.get('descricao') or '').strip()[:500] or None
+            try: quantidade=float(data.get('quantidade',1)); preco=float(data.get('preco_unitario',service['preco'] if service else 0))
+            except (TypeError,ValueError): return jsonify({'erro':'Quantidade ou preço inválido.'}),400
+            if quantidade<=0 or preco<0 or not item: return jsonify({'erro':'Informe item, quantidade e preço válidos.'}),400
+            cur=conn.cursor(); cur.execute('INSERT INTO pedidos_hospede (hotel_id,reserva_id,quarto_id,hospede_id,servico_id,item,descricao,quantidade,preco_unitario,status,status_pagamento,solicitado_em,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (g.hotel_id,reserva_id,quarto_id,hospede_id,servico_id,item,descricao,quantidade,preco,'ABERTO','PENDENTE',datetime.datetime.utcnow().isoformat(),g.current_user_id))
+            pid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Pedido lançado para o quarto.','id':pid,'total':round(quantidade*preco,2)}),201
+        rows=conn.execute('''
+            SELECT p.*,h.nome AS hospede_nome,q.numero AS quarto_numero,s.nome AS servico_nome
+            FROM pedidos_hospede p
+            LEFT JOIN hospedes h ON h.id=p.hospede_id AND h.hotel_id=p.hotel_id
+            LEFT JOIN quartos q ON q.id=p.quarto_id AND q.hotel_id=p.hotel_id
+            LEFT JOIN servicos s ON s.id=p.servico_id AND s.hotel_id=p.hotel_id
+            WHERE p.hotel_id=? ORDER BY p.id DESC
+        ''',(g.hotel_id,)).fetchall()
+        return jsonify([dict(x) for x in rows]),200
+    finally: conn.close()
+
+@app.route('/api/pedidos/<int:pid>/status',methods=['PUT'])
+@token_required
+def atualizar_pedido_status(current_user,role,pid):
+    data=request.get_json(silent=True) or {}; status=str(data.get('status','ENTREGUE')).upper()
+    if status not in ('ABERTO','EM_PREPARO','ENTREGUE','CANCELADO'): return jsonify({'erro':'Status inválido.'}),400
+    conn=get_db()
+    try:
+        p=conn.execute('SELECT id FROM pedidos_hospede WHERE id=? AND hotel_id=?',(pid,g.hotel_id)).fetchone()
+        if not p: return jsonify({'erro':'Pedido não encontrado.'}),404
+        conn.execute('UPDATE pedidos_hospede SET status=? WHERE id=? AND hotel_id=?',(status,pid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Status do pedido atualizado.'}),200
+    finally: conn.close()
+
+@app.route('/api/pedidos/<int:pid>/pagamento',methods=['PUT'])
+@token_required
+def marcar_pagamento_pedido(current_user,role,pid):
+    data=request.get_json(silent=True) or {}; status=str(data.get('status','PENDENTE')).upper(); forma=str(data.get('forma_pagamento','NÃO INFORMADO')).strip()[:40]
+    conn=get_db()
+    try:
+        p=conn.execute('SELECT * FROM pedidos_hospede WHERE id=? AND hotel_id=?',(pid,g.hotel_id)).fetchone()
+        if not p: return jsonify({'erro':'Pedido não encontrado.'}),404
+        if status=='PAGO':
+            registrar_entrada_pedido(conn,pid,forma)
+        elif status in ('PENDENTE','NAO_PAGO'):
+            if p['financeiro_id']: conn.execute("DELETE FROM fluxo_caixa WHERE id=? AND hotel_id=? AND origem_tipo='PEDIDO' AND origem_id=?",(p['financeiro_id'],g.hotel_id,pid))
+            conn.execute("UPDATE pedidos_hospede SET status_pagamento='PENDENTE',financeiro_id=NULL,pago_em=NULL,pago_por=NULL WHERE id=? AND hotel_id=?",(pid,g.hotel_id))
+        else: return jsonify({'erro':'Status de pagamento inválido.'}),400
+        conn.commit(); return jsonify({'mensagem':'Pagamento do pedido atualizado.'}),200
+    finally: conn.close()
+
 # ==========================================
 # CHECKOUT ASAAS
 # ==========================================

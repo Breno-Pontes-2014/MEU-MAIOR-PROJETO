@@ -97,8 +97,13 @@ class DBCursor:
     def lastrowid(self):
         if not self.connection.is_postgres:
             return self.cursor.lastrowid
-        row = self.connection.raw.execute('SELECT LASTVAL()').fetchone()
-        return row[0] if row else None
+        row = self.connection.raw.execute('SELECT LASTVAL() AS last_id').fetchone()
+        if not row:
+            return None
+        try:
+            return row['last_id']
+        except (TypeError, KeyError, IndexError):
+            return row[0]
 
 class DBConnection:
     def __init__(self, raw, is_postgres=False):
@@ -281,7 +286,7 @@ def normalizar_url(valor):
     if len(valor) > 1000:
         raise ValueError('URL muito longa.')
     parsed = urllib.parse.urlparse(valor)
-    if parsed.scheme not in ('https','http') or not parsed.netloc:
+    if parsed.scheme != 'https' or not parsed.netloc:
         raise ValueError('Informe uma URL válida começando por https://')
     return valor
 
@@ -1108,7 +1113,7 @@ def api_integracoes(current_user, role):
     try:
         integracao=get_hotel_integracoes(conn,g.hotel_id) or {'hotel_id':g.hotel_id}
         integracao['maps_embed_url']=maps_embed_url(integracao)
-        integracao['webhook_asaas_url']=request.url_root.rstrip('/')+'/webhooks/asaas'
+        integracao['webhook_asaas_url']=os.getenv('SAAS_PUBLIC_URL','').strip().rstrip('/')+'/webhooks/asaas' if os.getenv('SAAS_PUBLIC_URL','').strip() else request.url_root.rstrip('/')+'/webhooks/asaas'
         return jsonify(integracao),200
     finally:
         conn.close()

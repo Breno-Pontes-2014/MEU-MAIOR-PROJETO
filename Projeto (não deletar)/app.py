@@ -210,7 +210,7 @@ ENDPOINT_PERMISSIONS = {
     'criar_checkout_asaas':'subscription.manage','api_assinatura':'subscription.view','api_assinatura_limites':'subscription.view','api_solicitar_plano':'subscription.manage',
     'listar_usuarios_hotel':'team.view','criar_usuario_hotel':'team.manage','editar_usuario_hotel':'team.manage','desativar_usuario_hotel':'team.manage',
     'listar_servicos':'services.view','criar_servico':'services.manage','editar_servico':'services.manage','deletar_servico':'services.manage',
-    'listar_pedidos':'requests.view','criar_pedido':'requests.manage','atualizar_pedido_status':'requests.manage','marcar_pagamento_pedido':'requests.manage'
+    'listar_pedidos':'requests.view','criar_pedido':'requests.manage','editar_pedido':'requests.manage','atualizar_pedido_status':'requests.manage','marcar_pagamento_pedido':'requests.manage'
 }
 
 def can(role, permission):
@@ -447,6 +447,13 @@ def ensure_servicos_padrao(cursor, hotel_id):
         ('Transfer','Transporte',80.00,'trajeto'),
         ('Almoço','A&B',35.00,'pessoa'),
         ('Jantar','A&B',35.00,'pessoa'),
+        ('Travesseiro extra','Quarto',0.00,'unidade'),
+        ('Cobertor extra','Quarto',0.00,'unidade'),
+        ('Kit higiene','Quarto',0.00,'kit'),
+        ('Berço','Quarto',0.00,'diária'),
+        ('Chave ou cartão extra','Quarto',0.00,'unidade'),
+        ('Estacionamento','Diversos',0.00,'diária'),
+        ('Late check-out','Diversos',0.00,'reserva'),
         ('Outros','Diversos',0.00,'unidade')
     ]
     for nome,categoria,preco,unidade in padrao:
@@ -1639,6 +1646,39 @@ def listar_pedidos(current_user,role):
             WHERE p.hotel_id=? ORDER BY p.id DESC
         ''',(g.hotel_id,)).fetchall()
         return jsonify([dict(x) for x in rows]),200
+    finally: conn.close()
+
+@app.route('/api/pedidos/<int:pid>',methods=['PUT'])
+@token_required
+def editar_pedido(current_user,role,pid):
+    data=request.get_json(silent=True) or {}; conn=get_db()
+    try:
+        p=conn.execute('SELECT * FROM pedidos_hospede WHERE id=? AND hotel_id=?',(pid,g.hotel_id)).fetchone()
+        if not p: return jsonify({'erro':'Pedido não encontrado.'}),404
+        if p['status_pagamento']=='PAGO': return jsonify({'erro':'Pedido já pago não pode ser editado. Marque como não pago antes de corrigir.'}),409
+        try: quarto_id=int(data.get('quarto_id',p['quarto_id']))
+        except (TypeError,ValueError): return jsonify({'erro':'Quarto inválido.'}),400
+        if not conn.execute('SELECT id FROM quartos WHERE id=? AND hotel_id=?',(quarto_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Quarto inválido.'}),400
+        hospede_id=data.get('hospede_id',p['hospede_id'])
+        if hospede_id not in (None,''):
+            try: hospede_id=int(hospede_id)
+            except (TypeError,ValueError): return jsonify({'erro':'Hóspede inválido.'}),400
+            if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede inválido.'}),400
+        servico_id=data.get('servico_id',p['servico_id'])
+        service=None
+        if servico_id not in (None,''):
+            try: servico_id=int(servico_id)
+            except (TypeError,ValueError): return jsonify({'erro':'Serviço inválido.'}),400
+            service=conn.execute('SELECT * FROM servicos WHERE id=? AND hotel_id=?',(servico_id,g.hotel_id)).fetchone()
+            if not service: return jsonify({'erro':'Serviço não encontrado.'}),404
+        item=str(data.get('item',p['item']) or (service['nome'] if service else '')).strip()[:120]
+        desc=str(data.get('descricao',p['descricao'] or '') or '').strip()[:500] or None
+        try: qtd=float(data.get('quantidade',p['quantidade'])); preco=float(data.get('preco_unitario',service['preco'] if service else p['preco_unitario']))
+        except (TypeError,ValueError): return jsonify({'erro':'Quantidade ou preço inválido.'}),400
+        if not item or qtd<=0 or preco<0: return jsonify({'erro':'Revise item, quantidade e preço.'}),400
+        conn.execute('UPDATE pedidos_hospede SET quarto_id=?,hospede_id=?,servico_id=?,item=?,descricao=?,quantidade=?,preco_unitario=? WHERE id=? AND hotel_id=?',
+                     (quarto_id,hospede_id,servico_id,item,desc,qtd,preco,pid,g.hotel_id))
+        conn.commit(); return jsonify({'mensagem':'Pedido atualizado.','total':round(qtd*preco,2)}),200
     finally: conn.close()
 
 @app.route('/api/pedidos/<int:pid>/status',methods=['PUT'])

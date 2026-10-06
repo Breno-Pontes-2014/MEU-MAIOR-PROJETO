@@ -1958,6 +1958,42 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
                 </div>
             </div>
 
+            <div id="tab-integracoes" class="tab-content">
+                <div class="card">
+                    <h4>🔗 Canais de Reserva e Localização</h4>
+                    <p style="font-size:13px;color:#666;margin-bottom:15px;">Cadastre os links públicos do hotel. Eles ficam separados por hotel e podem ser usados na futura página comercial/central de reservas.</p>
+                    <form id="form-integracoes" onsubmit="salvarIntegracoes(event)" class="form-grid">
+                        <div class="form-group"><label>Booking.com</label><input type="url" id="int-booking" placeholder="https://www.booking.com/..."></div>
+                        <div class="form-group"><label>Airbnb</label><input type="url" id="int-airbnb" placeholder="https://www.airbnb.com/rooms/..."></div>
+                        <div class="form-group"><label>Expedia</label><input type="url" id="int-expedia" placeholder="https://www.expedia.com/..."></div>
+                        <div class="form-group"><label>Hoteis.com</label><input type="url" id="int-hoteis" placeholder="https://www.hoteis.com/..."></div>
+                        <div class="form-group"><label>Site próprio</label><input type="url" id="int-site" placeholder="https://seuhotel.com.br"></div>
+                        <div class="form-group"><label>Google Maps (link)</label><input type="url" id="int-maps-url" placeholder="https://www.google.com/maps/..."></div>
+                        <div class="form-group"><label>Nome no Google Maps</label><input type="text" id="int-maps-nome" maxlength="200"></div>
+                        <div class="form-group"><label>Place ID</label><input type="text" id="int-place-id" maxlength="300" placeholder="ChIJ..."></div>
+                        <div class="form-group" style="grid-column:span 2;"><label>Endereço</label><input type="text" id="int-endereco" maxlength="500"></div>
+                        <div class="form-group"><label>Latitude</label><input type="number" step="any" id="int-lat"></div>
+                        <div class="form-group"><label>Longitude</label><input type="number" step="any" id="int-lng"></div>
+                        <div class="form-group" style="grid-column:span 2;display:flex;gap:10px;align-items:flex-end;">
+                            <button type="button" class="btn btn-secondary" onclick="pesquisarGoogleMaps()">🔎 Pesquisar no Google Maps</button>
+                            <button type="submit" class="btn btn-primary">💾 Salvar integrações</button>
+                        </div>
+                    </form>
+                    <div id="resultado-maps" style="margin-top:15px;"></div>
+                    <div id="mapa-hotel" style="margin-top:15px;"></div>
+                </div>
+
+                <div class="card">
+                    <h4>💳 Webhook de cobrança</h4>
+                    <p style="font-size:13px;color:#666;">Para este SaaS, recomendo <b>Asaas</b>. O endpoint abaixo recebe os eventos e valida o token configurado no servidor.</p>
+                    <div class="form-group">
+                        <label>URL do webhook Asaas</label>
+                        <input type="text" id="int-webhook-url" readonly>
+                    </div>
+                    <p style="font-size:12px;color:#777;margin-top:8px;">No Asaas, configure o token de autenticação e use o header <code>asaas-access-token</code>. O endpoint registra eventos de forma idempotente antes de alterar a assinatura.</p>
+                </div>
+            </div>
+
             <div id="tab-whatsapp" class="tab-content">
                 <div class="card">
                     <h4>Central de Mensagens WhatsApp</h4>
@@ -2010,7 +2046,8 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
             { id: 'financeiro', icone: '💰', nome: 'Financeiro',            visivel: true },
             { id: 'ordens',     icone: '🛠️', nome: 'Ordens de Serviço',     visivel: true },
             { id: 'relatorios', icone: '📊', nome: 'Relatórios (ADR/RevPAR)', visivel: true },
-            { id: 'whatsapp',   icone: '💬', nome: 'WhatsApp',              visivel: true }
+            { id: 'whatsapp',   icone: '💬', nome: 'WhatsApp',              visivel: true },
+            { id: 'integracoes', icone: '🔗', nome: 'Integrações',           visivel: true }
         ];
 
         function lerJsonLocal(chave) {
@@ -2148,6 +2185,7 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
             if(tabName === 'ordens') carregarOrdens();
             if(tabName === 'relatorios') carregarRelatorios();
             if(tabName === 'whatsapp') preencherTemplateWhatsApp();
+            if(tabName === 'integracoes') carregarIntegracoes();
         }
 
         function escaparHtml(valor) {
@@ -2550,6 +2588,101 @@ DASHBOARD_TEMPLATE = '''<!DOCTYPE html>
                 <div class="metric-card"><h5>RevPAR</h5><p>R$ ${data.revpar.toFixed(2)}</p></div>
                 <div class="metric-card" style="border-left-color: #2ecc71;"><h5>Receita Hospedagem Total</h5><p style="color:#2ecc71;">R$ ${data.receita_total.toFixed(2)}</p></div>
             `;
+        }
+
+        async function carregarIntegracoes() {
+            try {
+                const res = await fetch('/api/integracoes');
+                const data = await res.json();
+                if(!res.ok) { alert(data.erro || 'Não foi possível carregar as integrações.'); return; }
+                document.getElementById('int-booking').value = data.booking_url || '';
+                document.getElementById('int-airbnb').value = data.airbnb_url || '';
+                document.getElementById('int-expedia').value = data.expedia_url || '';
+                document.getElementById('int-hoteis').value = data.hoteis_url || '';
+                document.getElementById('int-site').value = data.website_url || '';
+                document.getElementById('int-maps-url').value = data.maps_url || '';
+                document.getElementById('int-maps-nome').value = data.maps_nome || '';
+                document.getElementById('int-place-id').value = data.maps_place_id || '';
+                document.getElementById('int-endereco').value = data.endereco || '';
+                document.getElementById('int-lat').value = data.latitude ?? '';
+                document.getElementById('int-lng').value = data.longitude ?? '';
+                document.getElementById('int-webhook-url').value = data.webhook_asaas_url || '';
+                renderMapa(data.maps_embed_url);
+            } catch(e) { alert('Erro de conexão ao carregar integrações.'); }
+        }
+
+        async function salvarIntegracoes(e) {
+            e.preventDefault();
+            const body = {
+                booking_url: document.getElementById('int-booking').value.trim(),
+                airbnb_url: document.getElementById('int-airbnb').value.trim(),
+                expedia_url: document.getElementById('int-expedia').value.trim(),
+                hoteis_url: document.getElementById('int-hoteis').value.trim(),
+                website_url: document.getElementById('int-site').value.trim(),
+                maps_url: document.getElementById('int-maps-url').value.trim(),
+                maps_nome: document.getElementById('int-maps-nome').value.trim(),
+                maps_place_id: document.getElementById('int-place-id').value.trim(),
+                endereco: document.getElementById('int-endereco').value.trim(),
+                latitude: document.getElementById('int-lat').value || null,
+                longitude: document.getElementById('int-lng').value || null
+            };
+            const res = await fetch('/api/integracoes', {
+                method:'PUT',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(body)
+            });
+            const data = await res.json().catch(()=>({}));
+            if(res.ok) {
+                alert(data.mensagem || 'Integrações salvas.');
+                renderMapa(data.integracao?.maps_embed_url || null);
+            } else {
+                alert(data.erro || 'Não foi possível salvar as integrações.');
+            }
+        }
+
+        async function pesquisarGoogleMaps() {
+            const q = document.getElementById('int-maps-nome').value.trim() || document.getElementById('int-endereco').value.trim();
+            if(q.length < 3) { alert('Informe o nome ou endereço do hotel primeiro.'); return; }
+            const res = await fetch('/api/integracoes/maps/pesquisar', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({q})
+            });
+            const data = await res.json().catch(()=>({}));
+            const box = document.getElementById('resultado-maps');
+            if(!res.ok) { box.innerHTML='<div style="color:#c0392b;">'+escaparHtml(data.erro || 'Erro no Google Maps.')+'</div>'; return; }
+            box.innerHTML='';
+            (data.resultados || []).forEach(p=>{
+                const btn=document.createElement('button');
+                btn.type='button'; btn.className='btn btn-secondary'; btn.style.margin='4px';
+                btn.textContent=(p.nome||'Local')+' — '+(p.endereco||'');
+                btn.onclick=()=>{
+                    document.getElementById('int-maps-nome').value=p.nome||'';
+                    document.getElementById('int-place-id').value=p.id||'';
+                    document.getElementById('int-endereco').value=p.endereco||'';
+                    document.getElementById('int-lat').value=p.latitude ?? '';
+                    document.getElementById('int-lng').value=p.longitude ?? '';
+                    document.getElementById('int-maps-url').value=p.maps_url||'';
+                };
+                box.appendChild(btn);
+            });
+            if(!(data.resultados||[]).length) box.textContent='Nenhum local encontrado.';
+        }
+
+        function renderMapa(url) {
+            const box=document.getElementById('mapa-hotel');
+            if(!box) return;
+            box.innerHTML='';
+            if(!url) {
+                box.innerHTML='<div style="padding:12px;background:#f8f9fa;border-radius:6px;color:#666;">Configure GOOGLE_MAPS_API_KEY no servidor para mostrar o mapa incorporado.</div>';
+                return;
+            }
+            const iframe=document.createElement('iframe');
+            iframe.src=url;
+            iframe.width='100%'; iframe.height='350'; iframe.style.border='0';
+            iframe.loading='lazy'; iframe.allowFullscreen=true;
+            iframe.referrerPolicy='strict-origin-when-cross-origin';
+            box.appendChild(iframe);
         }
 
         function preencherTemplateWhatsApp() {

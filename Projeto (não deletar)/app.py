@@ -744,10 +744,10 @@ def token_required(f):
         try:
             user=None
             if session.get('user_id'):
-                user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? LIMIT 1',(session['user_id'],)).fetchone()
+                user=conn.execute('SELECT id,username,nome,role,hotel_id,ativo,email FROM usuarios WHERE id=? LIMIT 1',(session['user_id'],)).fetchone()
             if not user:
-                auth=request.headers.get('Authorization','')
-                token=auth[7:].strip() if auth.startswith('Bearer ') else None
+                auth_header=request.headers.get('Authorization','')
+                token=auth_header[7:].strip() if auth_header.startswith('Bearer ') else None
                 if not token:
                     return jsonify({'erro':'Token de acesso não fornecido.'}),401
                 try:
@@ -756,14 +756,37 @@ def token_required(f):
                     return jsonify({'erro':'Token expirado.'}),401
                 except jwt.InvalidTokenError:
                     return jsonify({'erro':'Token inválido.'}),401
-                user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? OR username=? LIMIT 1',(data.get('user_id'),data.get('username'))).fetchone()
-            if not user or not user['hotel_id']:
-                return jsonify({'erro':'Usuário sem hotel vinculado.'}),403
-            g.current_user_id=user['id']; g.current_user=user['username']; g.current_role=user['role']; g.hotel_id=user['hotel_id']
-            g.subscription=get_subscription(conn,g.hotel_id)
-            if request.endpoint not in PUBLIC_API_ENDPOINTS_WHEN_EXPIRED and (not g.subscription or not g.subscription['ativo']):
-                return subscription_blocked_response()
-            return f(user['username'],user['role'],*args,**kwargs)
+                user=conn.execute('SELECT id,username,nome,role,hotel_id,ativo,email FROM usuarios WHERE id=? OR username=? LIMIT 1',(data.get('user_id'),data.get('username'))).fetchone()
+
+            if not user:
+                return jsonify({'erro':'Usuário não encontrado.'}),401
+            if not int(user['ativo'] or 0):
+                return jsonify({'erro':'Seu usuário está bloqueado. Procure o administrador do hotel.'}),403
+
+            role=user['role']
+            if role=='platform_admin':
+                g.current_user_id=user['id']; g.current_user=user['username']; g.current_user_name=user['nome'] or user['username']
+                g.current_role=role; g.hotel_id=None; g.hotel=None; g.subscription=None
+            else:
+                hotel_id=user['hotel_id']
+                if not hotel_id:
+                    return jsonify({'erro':'Usuário sem hotel vinculado.'}),403
+                hotel=conn.execute('SELECT id,nome,local,bloqueado,bloqueio_motivo FROM hoteis WHERE id=? LIMIT 1',(hotel_id,)).fetchone()
+                if not hotel:
+                    return jsonify({'erro':'Hotel vinculado não encontrado.'}),403
+                if int(hotel['bloqueado'] or 0):
+                    return jsonify({'erro':'O acesso deste hotel foi suspenso pela administração do SaaS.','codigo':'HOTEL_BLOQUEADO','motivo':hotel['bloqueio_motivo'] or 'Acesso suspenso.'}),423
+                g.current_user_id=user['id']; g.current_user=user['username']; g.current_user_name=user['nome'] or user['username']
+                g.current_role=role; g.hotel_id=hotel_id; g.hotel=hotel
+                g.subscription=get_subscription(conn,hotel_id)
+                if request.endpoint not in PUBLIC_API_ENDPOINTS_WHEN_EXPIRED and (not g.subscription or not g.subscription['ativo']):
+                    return subscription_blocked_response()
+
+            required=ENDPOINT_PERMISSIONS.get(request.endpoint)
+            if required and not can(role,required):
+                return jsonify({'erro':'Seu perfil não possui permissão para esta operação.'}),403
+
+            return f(user['username'],role,*args,**kwargs)
         finally:
             conn.close()
     return decorated
@@ -774,7 +797,7 @@ def page_root():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == 'POST':
+    if request.method=='POST':
         username=request.form.get('username','').strip()
         password=request.form.get('password','')
         if not check_csrf():
@@ -783,16 +806,31 @@ def login():
         if login_is_locked(lock_key):
             return render_template_string(LOGIN_TEMPLATE,erro='Muitas tentativas. Tente novamente em alguns minutos.',csrf_token=csrf_token())
         conn=get_db()
-        user=conn.execute('SELECT * FROM usuarios WHERE username=?',(username,)).fetchone()
-        conn.close()
-        if user and check_password_hash(user['password'],password):
-            clear_login_failures(lock_key)
-            session.clear(); session.permanent=True
-            session['user_id']=user['id']; session['user']=user['username']; session['role']=user['role']; session['hotel_id']=user['hotel_id']
-            csrf_token()
-            return redirect(url_for('dashboard'))
-        register_login_failure(lock_key)
-        return render_template_string(LOGIN_TEMPLATE,erro='Usuário ou senha inválidos!',csrf_token=csrf_token())
+        try:
+            user=conn.execute('SELECT * FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone()
+            if user and senha_compat(user['password'],password):
+                if not int(user['ativo'] or 0):
+                    register_login_failure(lock_key)
+                    return render_template_string(LOGIN_TEMPLATE,erro='Este usuário está bloqueado.',csrf_token=csrf_token())
+                if user['role']!='platform_admin':
+                    hotel=conn.execute('SELECT id,nome,bloqueado FROM hoteis WHERE id=?',(user['hotel_id'],)).fetchone() if user['hotel_id'] else None
+                    if not hotel:
+                        return render_template_string(LOGIN_TEMPLATE,erro='Hotel deste usuário não foi encontrado.',csrf_token=csrf_token())
+                    if int(hotel['bloqueado'] or 0):
+                        return render_template_string(LOGIN_TEMPLATE,erro='O acesso deste hotel está suspenso pelo administrador do SaaS.',csrf_token=csrf_token())
+                clear_login_failures(lock_key)
+                if isinstance(user['password'],str) and user['password'].startswith('SAASPBKDF2$'):
+                    conn.execute('UPDATE usuarios SET password=? WHERE id=?',(generate_password_hash(password,method='pbkdf2:sha256'),user['id']))
+                conn.execute('UPDATE usuarios SET ultimo_login=? WHERE id=?',(datetime.datetime.utcnow().isoformat(),user['id']))
+                conn.commit()
+                session.clear(); session.permanent=True
+                session['user_id']=user['id']; session['user']=user['username']; session['role']=user['role']; session['hotel_id']=user['hotel_id']
+                csrf_token()
+                return redirect(url_for('dashboard'))
+            register_login_failure(lock_key)
+            return render_template_string(LOGIN_TEMPLATE,erro='Usuário ou senha inválidos.',csrf_token=csrf_token())
+        finally:
+            conn.close()
     return render_template_string(LOGIN_TEMPLATE,csrf_token=csrf_token())
 
 @app.route('/registro', methods=['GET', 'POST'])
@@ -878,11 +916,29 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    return render_template_string(DASHBOARD_TEMPLATE, csrf_token=csrf_token())
+    conn=get_db()
+    try:
+        user=conn.execute('SELECT id,username,nome,role,hotel_id,ativo,email FROM usuarios WHERE id=? LIMIT 1',(session['user_id'],)).fetchone()
+        if not user or not int(user['ativo'] or 0):
+            session.clear()
+            return redirect(url_for('login'))
+        hotel=None; assinatura=None
+        if user['hotel_id']:
+            hotel=conn.execute('SELECT id,nome,local,bloqueado,bloqueio_motivo FROM hoteis WHERE id=?',(user['hotel_id'],)).fetchone()
+            assinatura=get_subscription(conn,user['hotel_id'])
+            if not hotel or int(hotel['bloqueado'] or 0):
+                session.clear()
+                return render_template_string(LOGIN_TEMPLATE,erro='O acesso deste hotel está suspenso.',csrf_token=csrf_token())
+            if user['role']!='platform_admin' and (not assinatura or not assinatura['ativo']):
+                return render_template_string(LOGIN_TEMPLATE,erro='A assinatura deste hotel está inativa ou expirada.',csrf_token=csrf_token())
+        contexto={'id':user['id'],'username':user['username'],'nome':user['nome'] or user['username'],'role':user['role'],
+                  'role_label':ROLE_LABELS.get(user['role'],user['role']),'hotel_id':user['hotel_id'],
+                  'hotel_nome':hotel['nome'] if hotel else None,'hotel_local':hotel['local'] if hotel else None,
+                  'assinatura':assinatura}
+        return render_template_string(DASHBOARD_TEMPLATE,csrf_token=csrf_token(),contexto_usuario=contexto)
+    finally:
+        conn.close()
 
-# ==========================================
-# API - QUARTOS
-# ==========================================
 @app.route('/api/quartos', methods=['GET'])
 @token_required
 def listar_quartos(current_user, role):

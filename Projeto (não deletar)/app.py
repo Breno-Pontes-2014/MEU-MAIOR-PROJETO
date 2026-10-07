@@ -461,14 +461,13 @@ def ensure_servicos_padrao(cursor, hotel_id):
             cursor.execute('INSERT INTO servicos (hotel_id,nome,categoria,preco,unidade,ativo) VALUES (?,?,?,?,?,1)',(hotel_id,nome,categoria,preco,unidade))
 
 def ensure_platform_admin(cursor):
-    username=os.getenv('SAAS_ADMIN_INITIAL_USERNAME','').strip()
-    password=os.getenv('SAAS_ADMIN_INITIAL_PASSWORD','')
-    if not username or not password:
-        return
-    if cursor.execute('SELECT id FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone():
+    username=os.getenv('SAAS_ADMIN_INITIAL_USERNAME','ADMIN').strip() or 'ADMIN'
+    password=os.getenv('SAAS_ADMIN_INITIAL_PASSWORD','Senha do SAAS')
+    existente=cursor.execute('SELECT id,role FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone()
+    if existente:
         return
     erro=validate_password(password)
-    if erro:
+    if erro and not (username.upper()=='ADMIN' and password=='Senha do SAAS'):
         raise RuntimeError('SAAS_ADMIN_INITIAL_PASSWORD não atende à política de segurança.')
     cursor.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,ativo) VALUES (?,?,?,?,?,1)',
                    (username,username,generate_password_hash(password,method='pbkdf2:sha256'),'platform_admin',None))
@@ -2034,6 +2033,44 @@ def platform_hoteis(current_user,role):
         return jsonify(out),200
     finally: conn.close()
 
+@app.route('/api/platform/usuarios')
+@token_required
+def platform_usuarios(current_user,role):
+    if role!='platform_admin':
+        return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    conn=get_db()
+    try:
+        rows=conn.execute('''
+            SELECT u.id,u.username,u.nome,u.email,u.role,u.ativo,u.ultimo_login,
+                   h.id AS hotel_id,h.nome AS hotel_nome,h.bloqueado AS hotel_bloqueado
+            FROM usuarios u
+            LEFT JOIN hoteis h ON h.id=u.hotel_id
+            ORDER BY u.ativo DESC, u.role, h.nome, u.nome, u.username
+        ''').fetchall()
+        return jsonify([dict(r) for r in rows]),200
+    finally:
+        conn.close()
+
+@app.route('/api/platform/usuarios/<int:user_id>/status',methods=['PUT'])
+@token_required
+def platform_atualizar_usuario_status(current_user,role,user_id):
+    if role!='platform_admin':
+        return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    data=request.get_json(silent=True) or {}
+    ativo=bool(data.get('ativo',True))
+    conn=get_db()
+    try:
+        user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? LIMIT 1',(user_id,)).fetchone()
+        if not user:
+            return jsonify({'erro':'Usuário não encontrado.'}),404
+        if user['role']=='platform_admin':
+            return jsonify({'erro':'O administrador do SaaS não pode ser bloqueado por esta tela.'}),400
+        conn.execute('UPDATE usuarios SET ativo=? WHERE id=?',(1 if ativo else 0,user_id))
+        conn.commit()
+        return jsonify({'mensagem':'Usuário ativado.' if ativo else 'Usuário suspenso.','usuario_id':user_id,'ativo':ativo}),200
+    finally:
+        conn.close()
+
 @app.route('/api/platform/hoteis/<int:hotel_id>/bloqueio',methods=['PUT'])
 @token_required
 def platform_bloquear_hotel(current_user,role,hotel_id):
@@ -2651,9 +2688,13 @@ tr:last-child td{border-bottom:0}
 
       <div id="tab-plataforma" class="tab">
         <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Visão central dos hotéis, administradores, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
+          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Controle central dos hotéis, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
           <div id="plataforma-aviso" class="notice info">Carregando clientes.</div>
           <div class="table-wrap"><table><thead><tr><th>Hotel</th><th>Administrador(es)</th><th>Plano</th><th>Validade</th><th>Status</th><th>Controle</th></tr></thead><tbody id="tabela-plataforma"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Usuários dos hotéis</h2><p class="card-help">Veja todos os acessos e suspenda ou reative usuários individualmente.</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Usuário</th><th>Hotel</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ação</th></tr></thead><tbody id="tabela-platform-usuarios"></tbody></table></div>
         </div>
       </div>
     </section>
@@ -2914,7 +2955,10 @@ async function carregarRelatorios(){
 }
 async function carregarPainel(){
   const el=document.getElementById('tab-painel');
-  el.innerHTML='<div class="metrics" id="painel-metrics"></div><div class="card"><div class="card-header"><div><h2 class="card-title">Operação</h2><p class="card-help">Acesse rapidamente reservas, pedidos e ordens de serviço.</p></div></div><div class="toolbar"><button class="btn btn-primary" onclick="switchTab('reservas')">Abrir reservas</button><button class="btn btn-secondary" onclick="switchTab('servicos')">Abrir pedidos</button><button class="btn btn-secondary" onclick="switchTab('ordens')">Abrir ordens de serviço</button></div></div>';
+  el.innerHTML='<div class="metrics" id="painel-metrics"></div><div class="card"><div class="card-header"><div><h2 class="card-title">Operação</h2><p class="card-help">Acesse rapidamente reservas, pedidos e ordens de serviço.</p></div></div><div class="toolbar"><button class="btn btn-primary js-open-reservas">Abrir reservas</button><button class="btn btn-secondary js-open-servicos">Abrir pedidos</button><button class="btn btn-secondary js-open-ordens">Abrir ordens de serviço</button></div></div>';
+  el.querySelector('.js-open-reservas')?.addEventListener('click',()=>switchTab('reservas'));
+  el.querySelector('.js-open-servicos')?.addEventListener('click',()=>switchTab('servicos'));
+  el.querySelector('.js-open-ordens')?.addEventListener('click',()=>switchTab('ordens'));
   const d=await jsonFetch('/api/relatorios');const s=await jsonFetch('/api/assinatura');if(!d)return;
   const m=[['Quartos',d.total_quartos],['Ocupados',d.quartos_ocupados],['Ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Receita paga',moeda(d.receita_total)]];
   document.getElementById('painel-metrics').innerHTML=m.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
@@ -2936,20 +2980,60 @@ preencherWhatsApp();
 function enviarWhatsApp(){const tel=document.getElementById('wa-tel').value.replace(/\\D/g,'');if(tel.length<10){toast('Informe um telefone válido com DDD.','error');return;}window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(document.getElementById('wa-msg').value),'_blank','noopener,noreferrer');}
 
 async function carregarPlataforma(){
-  const aviso=document.getElementById('plataforma-aviso');const tb=document.getElementById('tabela-plataforma');aviso.className='notice info';aviso.textContent='Atualizando clientes...';
+  const aviso=document.getElementById('plataforma-aviso');
+  const tb=document.getElementById('tabela-plataforma');
+  const tu=document.getElementById('tabela-platform-usuarios');
+  aviso.className='notice info';
+  aviso.textContent='Atualizando hotéis e usuários...';
   try{
-    const [hotels,plans]=await Promise.all([jsonFetch('/api/platform/hoteis'),jsonFetch('/api/planos')]);state.planos=plans||[];tb.innerHTML='';
+    const [hotels,plans,users]=await Promise.all([
+      jsonFetch('/api/platform/hoteis'),
+      jsonFetch('/api/planos'),
+      jsonFetch('/api/platform/usuarios')
+    ]);
+    state.planos=plans||[];
+    tb.innerHTML='';
     (hotels||[]).forEach(h=>{
       const adminNames=(h.admins||[]).map(a=>a.nome||a.username).join(', ')||'Sem administrador ativo';
-      const sub=h.assinatura||{};const status=h.bloqueado?'BLOQUEADO':(sub.status||'SEM ASSINATURA');const validade=sub.periodo_fim||sub.trial_ate||'-';
+      const sub=h.assinatura||{};
+      const status=h.bloqueado?'BLOQUEADO':(sub.status||'SEM ASSINATURA');
+      const validade=sub.periodo_fim||sub.trial_ate||'-';
       const tr=document.createElement('tr');
       const planSel=state.planos.map(p=>'<option value="'+p.id+'" '+(String(p.id)===String(sub.plano_id)?'selected':'')+'>'+escapar(p.nome)+'</option>').join('');
       const stSel=['ATIVA','TESTE','SUSPENSA','CANCELADA'].map(x=>'<option value="'+x+'" '+(String(sub.status||'')===x?'selected':'')+'>'+x+'</option>').join('');
       tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong><div class="small">'+escapar(h.local||'-')+'</div></td><td>'+escapar(adminNames)+'</td><td><select id="plan-'+h.id+'">'+planSel+'</select></td><td><input id="dias-'+h.id+'" type="number" min="0" max="3660" value="'+(sub.periodo_fim?Math.max(0,Math.round((new Date(sub.periodo_fim)-new Date())/86400000)):30)+'" style="width:90px;padding:7px;border:1px solid #ccd3dd;border-radius:7px"> dias</td><td><span class="platform-status '+(h.bloqueado?'platform-blocked':'platform-open')+'">'+escapar(status)+'</span></td><td><div class="row-actions"><select id="status-'+h.id+'" style="padding:7px;border:1px solid #ccd3dd;border-radius:7px">'+stSel+'</select><button class="btn btn-primary" onclick="salvarAssinaturaPlataforma('+h.id+')">Salvar</button><button class="btn '+(h.bloqueado?'btn-success':'btn-danger')+'" onclick="alternarBloqueio('+h.id+','+(h.bloqueado?'false':'true')+')">'+(h.bloqueado?'Liberar':'Bloquear')+'</button></div></td>';
       tb.appendChild(tr);
     });
-    aviso.className='notice success';aviso.textContent=(hotels||[]).length+' hotel(is) encontrado(s).';
-  }catch(e){aviso.className='notice danger';aviso.textContent=e.message;}
+    tu.innerHTML='';
+    (users||[]).forEach(u=>{
+      const tr=document.createElement('tr');
+      const status=u.ativo?'ATIVO':'SUSPENSO';
+      const hotel=u.hotel_nome||'Administrador SaaS';
+      const acao=u.role==='platform_admin'
+        ? '<span class="small">Conta protegida</span>'
+        : '<button class="btn '+(u.ativo?'btn-danger':'btn-success')+'" onclick="alterarUsuarioPlataforma('+u.id+','+(u.ativo?'false':'true')+')">'+(u.ativo?'Suspender':'Reativar')+'</button>';
+      tr.innerHTML='<td><strong>'+escapar(u.nome||u.username)+'</strong><div class="small">'+escapar(u.username)+'</div></td><td>'+escapar(hotel)+'</td><td>'+escapar(ROLE_LABELS_JS(u.role))+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(status)+'</td><td>'+acao+'</td>';
+      tu.appendChild(tr);
+    });
+    aviso.className='notice success';
+    aviso.textContent=(hotels||[]).length+' hotel(is) e '+(users||[]).length+' usuário(s) encontrados.';
+  }catch(e){
+    aviso.className='notice danger';
+    aviso.textContent=e.message;
+  }
+}
+function ROLE_LABELS_JS(role){
+  const labels={platform_admin:'Administrador do SaaS',admin:'Administrador do Hotel',gerente:'Gerente',recepcao:'Recepção',limpeza:'Limpeza',manutencao:'Manutenção',financeiro:'Financeiro'};
+  return labels[role]||role||'-';
+}
+async function alterarUsuarioPlataforma(id,ativo){
+  const texto=ativo?'Reativar este usuário?':'Suspender este usuário?';
+  if(!confirm(texto))return;
+  try{
+    await jsonFetch('/api/platform/usuarios/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ativo})});
+    toast(ativo?'Usuário reativado.':'Usuário suspenso.','success');
+    carregarPlataforma();
+  }catch(e){toast(e.message,'error');}
 }
 async function alternarBloqueio(id,bloquear){const motivo=bloquear?(prompt('Motivo do bloqueio:','Pagamento pendente')||'Pagamento pendente'):'';if(bloquear&&!confirm('Bloquear o acesso deste hotel?'))return;if(!bloquear&&!confirm('Liberar o acesso deste hotel?'))return;try{await jsonFetch('/api/platform/hoteis/'+id+'/bloqueio',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({bloqueado:bloquear,motivo})});toast(bloquear?'Hotel bloqueado.':'Hotel liberado.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}
 async function salvarAssinaturaPlataforma(id){const plano_id=parseInt(document.getElementById('plan-'+id).value,10),status=document.getElementById('status-'+id).value,dias=parseInt(document.getElementById('dias-'+id).value,10);try{await jsonFetch('/api/platform/assinaturas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano_id,status,dias})});toast('Assinatura atualizada.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}

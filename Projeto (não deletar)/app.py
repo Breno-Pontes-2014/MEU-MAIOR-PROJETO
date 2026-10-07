@@ -2703,7 +2703,7 @@ const rolePerms={
   financeiro:new Set(['rooms.view','guests.view','reservations.view','finance.view','reports.view'])
 };
 function pode(p){const s=rolePerms[CONTEXTO_USUARIO.role];return s&& (s.has('*')||s.has(p));}
-function menuPermitido(id,p){return CONTEXTO_USUARIO.role==='admin'||pode(p)||id==='painel';}
+function menuPermitido(id,p){if(id==='estoque'&&CONTEXTO_USUARIO.possui_estoque===false)return false;if(id==='servicos'&&CONTEXTO_USUARIO.servicos_extras===false)return false;return CONTEXTO_USUARIO.role==='admin'||pode(p)||id==='painel';}
 function toast(msg,type=''){const host=document.getElementById('toast-host');const el=document.createElement('div');el.className='toast '+(type||'');el.textContent=msg;host.appendChild(el);setTimeout(()=>el.remove(),3500);}
 function escapar(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML;}
 function moeda(v){return 'R$ '+Number(v||0).toFixed(2).replace('.',',');}

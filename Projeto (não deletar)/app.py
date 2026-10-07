@@ -2679,20 +2679,20 @@ let abaAtual=null;
 let historicoAbas=[];
 const primeiraAba=CONTEXTO_USUARIO.role==='platform_admin'?'plataforma':'painel';
 
-const menusTenant=[
-  ['painel','PD','Painel','reports.view'],
-  ['quartos','QT','Quartos','rooms.view'],
-  ['hospedes','HP','Hóspedes','guests.view'],
-  ['categorias','CP','Categorias de pessoas','categories.view'],
-  ['reservas','RS','Reservas','reservations.view'],
-  ['servicos','SV','Serviços e pedidos','services.view'],
-  ['ordens','OS','Ordens de serviço','orders.view'],
-  ['equipe','EQ','Equipe e acessos','team.view'],
-  ['estoque','ET','Estoque','stock.view'],
-  ['financeiro','FN','Financeiro','finance.view'],
-  ['relatorios','RL','Relatórios','reports.view'],
-  ['integracoes','IN','Integrações','integrations.view'],
-  ['whatsapp','WA','WhatsApp','whatsapp.use']
+const menusTenant = [
+  {id:'painel', icone:'PD', nome:'Painel', permissao:'reports.view'},
+  {id:'quartos', icone:'QT', nome:'Quartos', permissao:'rooms.view'},
+  {id:'hospedes', icone:'HP', nome:'Hóspedes', permissao:'guests.view'},
+  {id:'categorias', icone:'CP', nome:'Categorias de pessoas', permissao:'categories.view'},
+  {id:'reservas', icone:'RS', nome:'Reservas', permissao:'reservations.view'},
+  {id:'servicos', icone:'SV', nome:'Serviços e pedidos', permissao:'services.view'},
+  {id:'ordens', icone:'OS', nome:'Ordens de serviço', permissao:'orders.view'},
+  {id:'equipe', icone:'EQ', nome:'Equipe e acessos', permissao:'team.view'},
+  {id:'estoque', icone:'ET', nome:'Estoque', permissao:'stock.view'},
+  {id:'financeiro', icone:'FN', nome:'Financeiro', permissao:'finance.view'},
+  {id:'relatorios', icone:'RL', nome:'Relatórios', permissao:'reports.view'},
+  {id:'integracoes', icone:'IN', nome:'Integrações', permissao:'integrations.view'},
+  {id:'whatsapp', icone:'WA', nome:'WhatsApp', permissao:'whatsapp.use'}
 ];
 const rolePerms={
   admin:new Set(['*']),
@@ -2727,24 +2727,26 @@ async function jsonFetch(url,opts={}){
 }
 function renderNav(){
   const nav=document.getElementById('nav');nav.innerHTML='';
-  const menu=CONTEXTO_USUARIO.role==='platform_admin'?[['plataforma','SA','Administração SaaS','platform']]:menusTenant.filter(x=>menuPermitido(x[0],x[3]));
+  const menu=CONTEXTO_USUARIO.role==='platform_admin'
+    ? [{id:'plataforma',icone:'SA',nome:'Administração SaaS',permissao:'platform'}]
+    : menusTenant.filter(x=>menuPermitido(x.id,x.permissao));
   menu.forEach(item=>{
-    const b=document.createElement('button');b.type='button';b.className='nav-btn';b.dataset.tab=item[0];
-    b.innerHTML='<span class="nav-code">'+item[1]+'</span><span>'+escapar(item[2])+'</span>';
-    b.addEventListener('click',()=>switchTab(item[0]));
+    const b=document.createElement('button');b.type='button';b.className='nav-btn';b.dataset.tab=item.id;
+    b.innerHTML='<span class="nav-code">'+item.icone+'</span><span>'+escapar(item.nome)+'</span>';
+    b.addEventListener('click',()=>switchTab(item.id));
     nav.appendChild(b);
   });
 }
 function tituloAba(tab){
   if(tab==='plataforma')return 'Administração do SaaS';
-  const m=menusTenant.find(x=>x[0]===tab);return m?m[2]:'Painel';
+  const m=menusTenant.find(x=>x.id===tab);return m?m.nome:'Painel';
 }
 function switchTab(tab,registrar=true){
   const target=document.getElementById('tab-'+tab);
   if(!target)return;
   if(CONTEXTO_USUARIO.role!=='platform_admin' && tab!=='painel'){
-    const m=menusTenant.find(x=>x[0]===tab);
-    if(m&&!menuPermitido(m[0],m[3])){toast('Seu perfil não possui acesso a esta área.','error');return;}
+    const m=menusTenant.find(x=>x.id===tab);
+    if(m&&!menuPermitido(m.id,m.permissao)){toast('Seu perfil não possui acesso a esta área.','error');return;}
   }
   if(registrar&&abaAtual&&abaAtual!==tab)historicoAbas.push(abaAtual);
   abaAtual=tab;

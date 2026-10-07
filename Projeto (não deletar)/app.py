@@ -485,9 +485,18 @@ def init_db():
                 local TEXT,
                 bloqueado INTEGER NOT NULL DEFAULT 0,
                 bloqueado_em TEXT,
-                bloqueio_motivo TEXT
+                bloqueio_motivo TEXT,
+                servicos_extras INTEGER NOT NULL DEFAULT 1,
+                possui_estoque INTEGER NOT NULL DEFAULT 1,
+                maps_api_status TEXT NOT NULL DEFAULT 'nao_tenho',
+                maps_api_key TEXT
             )
         ''')
+        add_column_if_missing(cursor,'hoteis','servicos_extras INTEGER NOT NULL DEFAULT 1')
+        add_column_if_missing(cursor,'hoteis','possui_estoque INTEGER NOT NULL DEFAULT 1')
+        add_column_if_missing(cursor,'hoteis',"maps_api_status TEXT NOT NULL DEFAULT 'nao_tenho'")
+        add_column_if_missing(cursor,'hoteis','maps_api_key TEXT')
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -858,6 +867,15 @@ def registro():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
         hotel_nome = request.form.get('hotel_nome', '').strip()
+        servicos_extras = request.form.get('servicos_extras', 'sim').strip().lower() == 'sim'
+        possui_estoque = request.form.get('possui_estoque', 'sim').strip().lower() == 'sim'
+        maps_api_status = request.form.get('maps_api_status', 'nao_tenho').strip().lower()
+        if maps_api_status not in ('tenho', 'nao_tenho'):
+            maps_api_status = 'nao_tenho'
+        maps_api_key = request.form.get('maps_api_key', '').strip() or None
+        if maps_api_status == 'nao_tenho':
+            maps_api_key = None
+
         if not check_csrf():
             return render_template_string(REGISTER_TEMPLATE, erro='Sessão expirada. Recarregue a página.', csrf_token=csrf_token())
         senha_erro = validate_password(password)
@@ -865,31 +883,32 @@ def registro():
             return render_template_string(REGISTER_TEMPLATE, erro=senha_erro, csrf_token=csrf_token())
 
         if not username or not password or not hotel_nome:
-            return render_template_string(REGISTER_TEMPLATE, erro='Preencha todos os campos obrigatórios!')
+            return render_template_string(REGISTER_TEMPLATE, erro='Preencha todos os campos obrigatórios.', csrf_token=csrf_token())
 
         conn = get_db()
         cursor = conn.cursor()
-
-        existente = cursor.execute('SELECT * FROM usuarios WHERE username = ?', (username,)).fetchone()
-        if existente:
-            conn.close()
-            return render_template_string(REGISTER_TEMPLATE, erro='Nome de usuário já está em uso!')
-
         try:
-            data_cadastro = datetime.date.today().isoformat()
+            existente = cursor.execute('SELECT id FROM usuarios WHERE username = ? LIMIT 1', (username,)).fetchone()
+            if existente:
+                return render_template_string(REGISTER_TEMPLATE, erro='Nome de usuário já está em uso.', csrf_token=csrf_token())
 
-            cursor.execute('INSERT INTO hoteis (nome, data_cadastro, local) VALUES (?, ?, ?)',
-                           (hotel_nome, data_cadastro, 'Goiânia'))
+            data_cadastro = datetime.date.today().isoformat()
+            cursor.execute('''
+                INSERT INTO hoteis
+                (nome, data_cadastro, local, servicos_extras, possui_estoque, maps_api_status, maps_api_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (hotel_nome, data_cadastro, 'Não informado', int(servicos_extras), int(possui_estoque), maps_api_status, maps_api_key))
             hotel_id = cursor.lastrowid
 
             hashed_pw = generate_password_hash(password, method='pbkdf2:sha256')
-            cursor.execute('INSERT INTO usuarios (username, password, role, hotel_id) VALUES (?, ?, ?, ?)',
-                           (username, hashed_pw, 'admin', hotel_id))
+            cursor.execute('''
+                INSERT INTO usuarios (username, nome, password, role, hotel_id, ativo)
+                VALUES (?, ?, ?, 'admin', ?, 1)
+            ''', (username, username, hashed_pw, hotel_id))
 
             tipos_qtds = request.form.getlist('tipo_qtd[]')
             tipos_nomes = request.form.getlist('tipo_nome[]')
             tipos_precos = request.form.getlist('tipo_preco[]')
-
             contador_quarto = 1
             for i in range(len(tipos_nomes)):
                 nome_t = tipos_nomes[i].strip()
@@ -898,7 +917,9 @@ def registro():
                 try:
                     qtd_t = int(tipos_qtds[i])
                     preco_t = float(tipos_precos[i].replace(',', '.'))
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, IndexError):
+                    continue
+                if qtd_t <= 0 or preco_t < 0:
                     continue
 
                 cursor.execute('''
@@ -915,18 +936,29 @@ def registro():
                     ''', (num_str, nome_t, preco_t, andar_val, hotel_id))
                     contador_quarto += 1
 
-            ensure_subscription_for_hotel(cursor,hotel_id)
+            # Cada novo hotel recebe os recursos básicos do SaaS.
+            # A preferência escolhida no cadastro fica registrada para a interface.
+            ensure_subscription_for_hotel(cursor, hotel_id)
+            ensure_servicos_padrao(cursor, hotel_id)
+            cursor.execute('DELETE FROM servicos WHERE hotel_id=? AND nome=?', (hotel_id, '__DISABLED_DEFAULT_SERVICES__'))
             conn.commit()
-            conn.close()
-            return render_template_string(LOGIN_TEMPLATE, sucesso="Hotel e Usuário cadastrados com sucesso! Faça seu login.",csrf_token=csrf_token())
-
+            return render_template_string(
+                LOGIN_TEMPLATE,
+                sucesso='Hotel e usuário cadastrados com sucesso! Faça seu login.',
+                csrf_token=csrf_token()
+            )
         except Exception:
             app.logger.exception('Falha no cadastro de hotel')
             conn.rollback()
+            return render_template_string(
+                REGISTER_TEMPLATE,
+                erro='Não foi possível concluir o cadastro. Verifique os dados e tente novamente.',
+                csrf_token=csrf_token()
+            )
+        finally:
             conn.close()
-            return render_template_string(REGISTER_TEMPLATE, erro='Não foi possível concluir o cadastro. Verifique os dados e tente novamente.',csrf_token=csrf_token())
 
-    return render_template_string(REGISTER_TEMPLATE,csrf_token=csrf_token())
+    return render_template_string(REGISTER_TEMPLATE, csrf_token=csrf_token())
 
 @app.route('/logout',methods=['GET','POST'])
 def logout():
@@ -946,7 +978,7 @@ def dashboard():
             return redirect(url_for('login'))
         hotel=None; assinatura=None
         if user['hotel_id']:
-            hotel=conn.execute('SELECT id,nome,local,bloqueado,bloqueio_motivo FROM hoteis WHERE id=?',(user['hotel_id'],)).fetchone()
+            hotel=conn.execute('SELECT id,nome,local,bloqueado,bloqueio_motivo,servicos_extras,possui_estoque,maps_api_status FROM hoteis WHERE id=?',(user['hotel_id'],)).fetchone()
             assinatura=get_subscription(conn,user['hotel_id'])
             if not hotel or int(hotel['bloqueado'] or 0):
                 session.clear()
@@ -956,6 +988,9 @@ def dashboard():
         contexto={'id':user['id'],'username':user['username'],'nome':user['nome'] or user['username'],'role':user['role'],
                   'role_label':ROLE_LABELS.get(user['role'],user['role']),'hotel_id':user['hotel_id'],
                   'hotel_nome':hotel['nome'] if hotel else None,'hotel_local':hotel['local'] if hotel else None,
+                  'servicos_extras':bool(hotel['servicos_extras']) if hotel else True,
+                  'possui_estoque':bool(hotel['possui_estoque']) if hotel else True,
+                  'maps_api_status':hotel['maps_api_status'] if hotel else 'nao_tenho',
                   'assinatura':assinatura}
         return render_template_string(DASHBOARD_TEMPLATE,csrf_token=csrf_token(),contexto_usuario=contexto)
     finally:
@@ -2090,101 +2125,115 @@ REGISTER_TEMPLATE = """
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Cadastro - Hotel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadastro - Hotel Master</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body{background:#f4f6f9}.card{border:0;border-radius:16px}.section-title{font-size:15px;font-weight:700;margin-top:24px;margin-bottom:12px}.help{font-size:12px;color:#6c757d}.api-key-wrap{display:none}.api-key-wrap.show{display:block}
+    </style>
 </head>
-<body class="bg-light">
-<div class="container py-5" style="max-width: 600px;">
-    <h2 class="mb-4 text-center">Cadastro de Novo Hotel</h2>
-    
-    {% if erro %}
-    <div class="alert alert-danger">{{ erro }}</div>
-    {% endif %}
-    {% if sucesso %}
-    <div class="alert alert-success">{{ sucesso }}</div>
-    {% endif %}
+<body>
+<div class="container py-4 py-md-5" style="max-width: 780px;">
+  <div class="card shadow-sm p-4 p-md-5">
+    <h2 class="mb-1 text-center">Cadastro de Novo Hotel</h2>
+    <p class="text-center text-muted mb-4">Configure o hotel e os recursos que deseja utilizar.</p>
+    {% if erro %}<div class="alert alert-danger">{{ erro }}</div>{% endif %}
+    {% if sucesso %}<div class="alert alert-success">{{ sucesso }}</div>{% endif %}
 
-    <form method="POST">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="mb-3">
-            <label class="form-label">Usuário (Admin)</label>
-            <input type="text" name="username" class="form-control" required>
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Senha</label>
-            <input type="password" name="password" class="form-control" required>
-        </div>
-        <div class="mb-3">
-            <label class="form-label">Nome do Hotel</label>
-            <input type="text" name="hotel_nome" class="form-control" required>
-        </div>
+    <form method="POST" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-        <div class="mb-3">
-            <label class="form-label fw-bold">Configuração dos Quartos</label>
-            <div id="container-tipos">
-                <div class="row g-2 mb-2 linha-quarto align-items-end">
-                    <div class="col-md-3">
-                        <label class="form-label small">Qtd Quartos</label>
-                        <input type="number" name="tipo_qtd[]" class="form-control" value="10" min="1" required>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label small">Tipo de Quarto</label>
-                        <input type="text" name="tipo_nome[]" class="form-control" value="Standard" placeholder="Ex: Standard, Luxo" required>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label small">Diária (R$)</label>
-                        <input type="number" step="0.01" name="tipo_preco[]" class="form-control" value="150.00" required>
-                    </div>
-                    <div class="col-md-2">
-                        <button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button>
-                    </div>
-                </div>
-            </div>
-            
-            <button type="button" class="btn btn-outline-primary btn-sm mt-2" onclick="adicionarLinha()">
-                + Adicionar Outro Tipo de Quarto
-            </button>
+      <div class="section-title">Acesso do administrador</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Usuário (Admin)</label>
+          <input type="text" name="username" class="form-control" required maxlength="80" autocomplete="username">
         </div>
+        <div class="col-md-6">
+          <label class="form-label">Senha</label>
+          <input type="password" name="password" class="form-control" required minlength="10" autocomplete="new-password">
+          <div class="help mt-1">Mínimo de 10 caracteres, com maiúscula, minúscula e número.</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Nome do Hotel</label>
+          <input type="text" name="hotel_nome" class="form-control" required maxlength="180">
+        </div>
+      </div>
 
-        <button type="submit" class="btn btn-primary w-100 mt-3">Cadastrar Hotel</button>
+      <div class="section-title">Configuração dos Quartos</div>
+      <div id="container-tipos">
+        <div class="row g-2 mb-2 linha-quarto align-items-end">
+          <div class="col-md-3"><label class="form-label small">Qtd Quartos</label><input type="number" name="tipo_qtd[]" class="form-control" value="10" min="1" max="500" required></div>
+          <div class="col-md-4"><label class="form-label small">Tipo de Quarto</label><input type="text" name="tipo_nome[]" class="form-control" value="Standard" maxlength="80" required></div>
+          <div class="col-md-3"><label class="form-label small">Diária (R$)</label><input type="number" step="0.01" name="tipo_preco[]" class="form-control" value="150.00" min="0" required></div>
+          <div class="col-md-2"><button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm" onclick="adicionarLinha()">+ Adicionar outro tipo de quarto</button>
+
+      <div class="section-title">Serviços extras</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Deseja utilizar serviços extras?</label>
+          <select name="servicos_extras" class="form-select">
+            <option value="sim" selected>Sim, quero usar serviços extras</option>
+            <option value="nao">Não quero utilizar agora</option>
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Estoque</label>
+          <select name="possui_estoque" class="form-select">
+            <option value="sim" selected>Tenho estoque</option>
+            <option value="nao">Não tenho estoque</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section-title">Google Maps</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">API do Google Maps</label>
+          <select name="maps_api_status" id="maps_api_status" class="form-select" onchange="alternarMapsKey()">
+            <option value="nao_tenho" selected>Não tenho API do Google Maps</option>
+            <option value="tenho">Tenho API do Google Maps</option>
+          </select>
+        </div>
+        <div class="col-md-6 api-key-wrap" id="maps-key-wrap">
+          <label class="form-label">Chave da API do Google Maps</label>
+          <input type="password" name="maps_api_key" id="maps_api_key" class="form-control" maxlength="300" autocomplete="new-password">
+          <div class="help mt-1">Você também poderá configurar a integração depois no sistema.</div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100 mt-4 py-2">Cadastrar Hotel</button>
+      <a href="/login" class="btn btn-outline-secondary w-100 mt-2">Voltar para o Login</a>
     </form>
+  </div>
 </div>
-
 <script>
-function adicionarLinha() {
-    const container = document.getElementById('container-tipos');
-    const novaLinha = document.createElement('div');
-    novaLinha.className = 'row g-2 mb-2 linha-quarto align-items-end';
-    novaLinha.innerHTML = `
-        <div class="col-md-3">
-            <input type="number" name="tipo_qtd[]" class="form-control" placeholder="Qtd" min="1" required>
-        </div>
-        <div class="col-md-4">
-            <input type="text" name="tipo_nome[]" class="form-control" placeholder="Ex: Suíte, Luxo" required>
-        </div>
-        <div class="col-md-3">
-            <input type="number" step="0.01" name="tipo_preco[]" class="form-control" placeholder="R$" required>
-        </div>
-        <div class="col-md-2">
-            <button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button>
-        </div>
-    `;
-    container.appendChild(novaLinha);
+function adicionarLinha(){
+  const container=document.getElementById('container-tipos');
+  const novaLinha=document.createElement('div');
+  novaLinha.className='row g-2 mb-2 linha-quarto align-items-end';
+  novaLinha.innerHTML='<div class="col-md-3"><input type="number" name="tipo_qtd[]" class="form-control" placeholder="Qtd" min="1" max="500" required></div><div class="col-md-4"><input type="text" name="tipo_nome[]" class="form-control" placeholder="Ex.: Suíte, Luxo" maxlength="80" required></div><div class="col-md-3"><input type="number" step="0.01" name="tipo_preco[]" class="form-control" placeholder="R$" min="0" required></div><div class="col-md-2"><button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button></div>';
+  container.appendChild(novaLinha);
 }
-
-function removerLinha(botao) {
-    const linhas = document.querySelectorAll('.linha-quarto');
-    if (linhas.length > 1) {
-        botao.closest('.linha-quarto').remove();
-    } else {
-        alert('Deve manter pelo menos um tipo de quarto configurado.');
-    }
+function removerLinha(botao){
+  const linhas=document.querySelectorAll('.linha-quarto');
+  if(linhas.length>1)botao.closest('.linha-quarto').remove();
+  else alert('Deve manter pelo menos um tipo de quarto configurado.');
 }
+function alternarMapsKey(){
+  const ativo=document.getElementById('maps_api_status').value==='tenho';
+  document.getElementById('maps-key-wrap').classList.toggle('show',ativo);
+  document.getElementById('maps_api_key').required=ativo;
+  if(!ativo)document.getElementById('maps_api_key').value='';
+}
+alternarMapsKey();
 </script>
 </body>
 </html>
 """
-
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -2612,7 +2661,7 @@ tr:last-child td{border-bottom:0}
 </div>
 <div class="toast-host" id="toast-host"></div>
 <script>
-const CONTEXTO_USUARIO = {{ contexto_usuario|tojson }};
+const CONTEXTO_USUARIO = JSON.parse({{ contexto_usuario|tojson|tojson }});
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 const ORIGINAL_FETCH = window.fetch.bind(window);
 window.fetch = function(input, init = {}) {
@@ -2882,7 +2931,7 @@ function renderMapa(url){const box=document.getElementById('mapa-hotel');box.inn
 function preencherWhatsApp(){document.getElementById('wa-msg').value=document.getElementById('wa-template').value;}
 document.getElementById('wa-template').addEventListener('change',preencherWhatsApp);
 preencherWhatsApp();
-function enviarWhatsApp(){const tel=document.getElementById('wa-tel').value.replace(/\D/g,'');if(tel.length<10){toast('Informe um telefone válido com DDD.','error');return;}window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(document.getElementById('wa-msg').value),'_blank','noopener,noreferrer');}
+function enviarWhatsApp(){const tel=document.getElementById('wa-tel').value.replace(/\\D/g,'');if(tel.length<10){toast('Informe um telefone válido com DDD.','error');return;}window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(document.getElementById('wa-msg').value),'_blank','noopener,noreferrer');}
 
 async function carregarPlataforma(){
   const aviso=document.getElementById('plataforma-aviso');const tb=document.getElementById('tabela-plataforma');aviso.className='notice info';aviso.textContent='Atualizando clientes...';

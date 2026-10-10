@@ -1,0 +1,123 @@
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadastro - Hotel Master</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body{background:#f4f6f9}.card{border:0;border-radius:16px}.section-title{font-size:15px;font-weight:700;margin-top:24px;margin-bottom:12px}.help{font-size:12px;color:#6c757d}.api-key-wrap{display:none}.api-key-wrap.show{display:block}
+    </style>
+</head>
+<body>
+<div class="container py-4 py-md-5" style="max-width: 780px;">
+  <div class="card shadow-sm p-4 p-md-5">
+    <h2 class="mb-1 text-center">Cadastro de Novo Hotel</h2>
+    <p class="text-center text-muted mb-4">Configure o hotel e os recursos que deseja utilizar.</p>
+    {% if erro %}<div class="alert alert-danger">{{ erro }}</div>{% endif %}
+    {% if sucesso %}<div class="alert alert-success">{{ sucesso }}</div>{% endif %}
+
+    <form method="POST" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="section-title">Acesso do administrador</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Usuário (Admin)</label>
+          <input type="text" name="username" class="form-control" required maxlength="80" autocomplete="username">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Senha</label>
+          <input type="password" name="password" class="form-control" required minlength="10" autocomplete="new-password">
+          <div class="help mt-1">Mínimo de 10 caracteres, com maiúscula, minúscula e número.</div>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Nome do Hotel</label>
+          <input type="text" name="hotel_nome" class="form-control" required maxlength="180">
+        </div>
+      </div>
+
+      <div class="section-title">Configuração dos Quartos</div>
+      <div id="container-tipos">
+        <div class="row g-2 mb-2 linha-quarto align-items-end">
+          <div class="col-md-3"><label class="form-label small">Qtd Quartos</label><input type="number" name="tipo_qtd[]" class="form-control" value="10" min="1" max="500" required></div>
+          <div class="col-md-4"><label class="form-label small">Tipo de Quarto</label><input type="text" name="tipo_nome[]" class="form-control" value="Standard" maxlength="80" required></div>
+          <div class="col-md-3"><label class="form-label small">Diária (R$)</label><input type="number" step="0.01" name="tipo_preco[]" class="form-control" value="150.00" min="0" required></div>
+          <div class="col-md-2"><button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm" onclick="adicionarLinha()">+ Adicionar outro tipo de quarto</button>
+
+      <div class="section-title">Faixas etárias para reservas</div>
+      <p class="help">Defina faixas que cubram dos 0 aos 120 anos. Na reserva, você informa quantas pessoas há em cada faixa; o sistema calcula os adicionais por diária.</p>
+      <div id="container-faixas-registro">
+        <div class="row g-2 mb-2 linha-faixa-registro align-items-end">
+          <div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" value="Criança" maxlength="100" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" value="0" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" value="11" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div>
+          <div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>
+        </div>
+        <div class="row g-2 mb-2 linha-faixa-registro align-items-end">
+          <div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" value="Adulto" maxlength="100" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" value="12" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" value="120" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div>
+          <div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm" onclick="adicionarFaixaRegistro()">+ Adicionar faixa etária</button>
+
+      <div class="section-title">Serviços extras</div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">Deseja utilizar serviços extras?</label>
+          <select name="servicos_extras" class="form-select">
+            <option value="sim" selected>Sim, quero usar serviços extras</option>
+            <option value="nao">Não quero utilizar agora</option>
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Estoque</label>
+          <select name="possui_estoque" class="form-select">
+            <option value="sim" selected>Tenho estoque</option>
+            <option value="nao">Não tenho estoque</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section-title">Localização</div>
+      <p class="help">Configure a pesquisa de endereço e o mapa depois do cadastro, na aba Integrações. As chaves Geoapify são configuradas pelo administrador no ambiente do servidor.</p>
+
+      <button type="submit" class="btn btn-primary w-100 mt-4 py-2">Cadastrar Hotel</button>
+      <a href="/login" class="btn btn-outline-secondary w-100 mt-2">Voltar para o Login</a>
+    </form>
+  </div>
+</div>
+<script>
+function adicionarLinha(){
+  const container=document.getElementById('container-tipos');
+  const novaLinha=document.createElement('div');
+  novaLinha.className='row g-2 mb-2 linha-quarto align-items-end';
+  novaLinha.innerHTML='<div class="col-md-3"><input type="number" name="tipo_qtd[]" class="form-control" placeholder="Qtd" min="1" max="500" required></div><div class="col-md-4"><input type="text" name="tipo_nome[]" class="form-control" placeholder="Ex.: Suíte, Luxo" maxlength="80" required></div><div class="col-md-3"><input type="number" step="0.01" name="tipo_preco[]" class="form-control" placeholder="R$" min="0" required></div><div class="col-md-2"><button type="button" class="btn btn-outline-danger w-100" onclick="removerLinha(this)">Remover</button></div>';
+  container.appendChild(novaLinha);
+}
+function removerLinha(botao){
+  const linhas=document.querySelectorAll('.linha-quarto');
+  if(linhas.length>1)botao.closest('.linha-quarto').remove();
+  else alert('Deve manter pelo menos um tipo de quarto configurado.');
+}
+function adicionarFaixaRegistro(){
+  const linha=document.createElement('div');linha.className='row g-2 mb-2 linha-faixa-registro align-items-end';
+  linha.innerHTML='<div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" maxlength="100" placeholder="Ex.: Adolescente" required></div><div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" min="0" max="120" required></div><div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" min="0" max="120" required></div><div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div><div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>';
+  document.getElementById('container-faixas-registro').appendChild(linha);
+}
+function removerFaixaRegistro(botao){
+  const linhas=document.querySelectorAll('.linha-faixa-registro');
+  if(linhas.length>1)botao.closest('.linha-faixa-registro').remove();
+  else alert('Mantenha pelo menos uma faixa etária.');
+}
+</script>
+</body>
+</html>

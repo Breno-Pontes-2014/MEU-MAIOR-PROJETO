@@ -44,7 +44,7 @@ DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
 SAAS_TIMEZONE_OFFSET = os.getenv('SAAS_TIMEZONE_OFFSET', '-03:00').strip()
 JWT_SECRET_FILE = os.path.join(BASE_DIR, '.jwt_secret')
 FLASK_SECRET_FILE = os.path.join(BASE_DIR, '.flask_secret')
-TEMPLATES_DIR = BASE_DIR
+TEMPLATES_DIR = os.path.join(BASE_DIR, 'templates')
 
 def saas_local_now():
     try:

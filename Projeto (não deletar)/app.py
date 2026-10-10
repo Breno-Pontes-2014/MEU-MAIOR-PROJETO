@@ -2,6 +2,7 @@ import os
 import datetime
 import json
 import hashlib
+import math
 import re
 import secrets
 import time
@@ -1654,10 +1655,25 @@ def gerenciar_financeiro(current_user,role):
             tipo=str(data.get('tipo') or 'ENTRADA').upper(); desc=str(data.get('descricao') or '').strip()[:200]; cat=str(data.get('categoria') or 'Geral').strip()[:80]
             try: valor=float(data.get('valor',0))
             except (TypeError,ValueError): return jsonify({'erro':'Valor inválido.'}),400
-            if tipo not in ('ENTRADA','SAIDA') or not desc or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
-            cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,criado_por) VALUES (?,?,?,?,?,?,?,?)',(tipo,desc,valor,cat,str(data.get('data') or saas_local_now().date().isoformat()),g.hotel_id,None,g.current_user_id)); conn.commit()
+            if tipo not in ('ENTRADA','SAIDA') or not desc or not math.isfinite(valor) or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
+            try: data_lancamento=datetime.date.fromisoformat(str(data.get('data') or saas_local_now().date().isoformat())).isoformat()
+            except (TypeError,ValueError): return jsonify({'erro':'Informe uma data válida para o lançamento.'}),400
+            cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,criado_por) VALUES (?,?,?,?,?,?,?,?)',(tipo,desc,valor,cat,data_lancamento,g.hotel_id,None,g.current_user_id)); conn.commit()
             return jsonify({'mensagem':'Lançamento realizado.','id':cur.lastrowid}),201
-        return jsonify([dict(x) for x in conn.execute('SELECT * FROM fluxo_caixa WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]),200
+        inicio=request.args.get('inicio')
+        fim=request.args.get('fim')
+        sql='SELECT * FROM fluxo_caixa WHERE hotel_id=?'
+        params=[g.hotel_id]
+        if inicio or fim:
+            if not inicio or not fim: return jsonify({'erro':'Informe a data inicial e final do filtro financeiro.'}),400
+            try:
+                dt_inicio=datetime.date.fromisoformat(inicio); dt_fim=datetime.date.fromisoformat(fim)
+            except ValueError: return jsonify({'erro':'Informe datas financeiras válidas no formato AAAA-MM-DD.'}),400
+            if dt_fim<dt_inicio: return jsonify({'erro':'A data final deve ser igual ou posterior à inicial.'}),400
+            if (dt_fim-dt_inicio).days>366: return jsonify({'erro':'O filtro financeiro aceita no máximo 367 dias.'}),400
+            sql+=' AND data>=? AND data<=?'; params.extend([dt_inicio.isoformat(),dt_fim.isoformat()])
+        sql+=' ORDER BY data DESC,id DESC'
+        return jsonify([dict(x) for x in conn.execute(sql,tuple(params)).fetchall()]),200
     finally: conn.close()
 
 @app.route('/api/financeiro/<int:fid>',methods=['PUT'])
@@ -1671,8 +1687,10 @@ def editar_financeiro(current_user,role,fid):
         tipo=str(data.get('tipo',row['tipo']) or '').upper(); desc=str(data.get('descricao',row['descricao']) or '').strip()[:200]; cat=str(data.get('categoria',row['categoria']) or '').strip()[:80]
         try: valor=float(data.get('valor',row['valor']))
         except (TypeError,ValueError): return jsonify({'erro':'Valor inválido.'}),400
-        if tipo not in ('ENTRADA','SAIDA') or not desc or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
-        conn.execute('UPDATE fluxo_caixa SET tipo=?,descricao=?,valor=?,categoria=? WHERE id=? AND hotel_id=?',(tipo,desc,valor,cat,fid,g.hotel_id)); conn.commit()
+        if tipo not in ('ENTRADA','SAIDA') or not desc or not math.isfinite(valor) or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
+        try: data_lancamento=datetime.date.fromisoformat(str(data.get('data',row['data']) or row['data'])).isoformat()
+        except (TypeError,ValueError): return jsonify({'erro':'Informe uma data válida para o lançamento.'}),400
+        conn.execute('UPDATE fluxo_caixa SET tipo=?,descricao=?,valor=?,categoria=?,data=? WHERE id=? AND hotel_id=?',(tipo,desc,valor,cat,data_lancamento,fid,g.hotel_id)); conn.commit()
         return jsonify({'mensagem':'Lançamento atualizado.'}),200
     finally: conn.close()
 
@@ -1832,7 +1850,7 @@ def relatorios_gerenciais(current_user,role):
                 LEFT JOIN quartos q ON q.numero=r.quarto_numero AND q.hotel_id=r.hotel_id
                 WHERE r.hotel_id=? AND r.status<>'CANCELADA' AND r.check_in<? AND r.check_out>?''',
                 (g.hotel_id,dt_fim_exclusivo.isoformat(),dt_ini.isoformat())).fetchall()
-            quartos_por_dia={}; receita_gerada=0.0; receita_pendente=0.0; noites=0; por_categoria={}; pessoas_reservadas=0
+            quartos_por_dia={}; receita_gerada=0.0; receita_pendente=0.0; receita_paga=0.0; noites=0; por_categoria={}; pessoas_reservadas=0
             for reserva in reservas:
                 try: entrada=datetime.date.fromisoformat(str(reserva['check_in'])[:10]); saida=datetime.date.fromisoformat(str(reserva['check_out'])[:10])
                 except (TypeError,ValueError): continue
@@ -1842,6 +1860,7 @@ def relatorios_gerenciais(current_user,role):
                 if not quantidade_noites: continue
                 valor_periodo=diaria*quantidade_noites; receita_gerada+=valor_periodo; noites+=quantidade_noites
                 if str(reserva['status_pagamento'] or '').upper()!='PAGO': receita_pendente+=valor_periodo
+                else: receita_paga+=valor_periodo
                 categoria=str(reserva['categoria_quarto'] or 'Sem categoria')
                 grupo=por_categoria.setdefault(categoria,{'receita':0.0,'diarias':0})
                 grupo['receita']+=valor_periodo; grupo['diarias']+=quantidade_noites
@@ -1851,24 +1870,26 @@ def relatorios_gerenciais(current_user,role):
                 while dia<ultimo:
                     quartos_por_dia[dia.isoformat()]=quartos_por_dia.get(dia.isoformat(),0)+1
                     dia+=datetime.timedelta(days=1)
-            serie=[]; ocupacao_soma=0.0; capacidade=total*dias_periodo
+            dias_calculo=(dt_fim-dt_ini).days+1
+            serie=[]; ocupacao_soma=0.0; capacidade=total*dias_calculo
             dia=dt_ini
             while dia<=dt_fim:
                 ocupados=quartos_por_dia.get(dia.isoformat(),0); percentual=(ocupados/total*100) if total else 0
                 serie.append({'data':dia.isoformat(),'quartos_ocupados':ocupados,'ocupacao':round(percentual,2)})
                 ocupacao_soma+=percentual; dia+=datetime.timedelta(days=1)
-            ocupacao_media=ocupacao_soma/dias_periodo if dias_periodo else 0
+            ocupacao_media=ocupacao_soma/dias_calculo if dias_calculo else 0
             adr=receita_gerada/noites if noites else 0
             revpar=receita_gerada/capacidade if capacidade else 0
             categorias=[{'categoria':k,'receita':round(v['receita'],2),'diarias':v['diarias'],'adr':round(v['receita']/v['diarias'],2) if v['diarias'] else 0} for k,v in sorted(por_categoria.items())]
-            return reservas,serie,receita_gerada,receita_pendente,noites,ocupacao_media,adr,revpar,categorias,pessoas_reservadas
+            return reservas,serie,receita_gerada,receita_pendente,receita_paga,noites,ocupacao_media,adr,revpar,categorias,pessoas_reservadas
 
-        reservas,serie,gerada,pendente,noites,ocupacao,adr,revpar,categorias,pessoas_periodo=carregar_periodo(inicio,fim)
+        reservas,serie,gerada,pendente,paga,noites,ocupacao,adr,revpar,categorias,pessoas_periodo=carregar_periodo(inicio,fim)
         receita_caixa=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND data>=? AND data<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['s'] or 0)
         receita_servicos=float(conn.execute("SELECT COALESCE(SUM(quantidade*preco_unitario),0) AS s FROM pedidos_hospede WHERE hotel_id=? AND status_pagamento='PAGO' AND substr(COALESCE(pago_em,solicitado_em),1,10)>=? AND substr(COALESCE(pago_em,solicitado_em),1,10)<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['s'] or 0)
         cancelamentos=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status='CANCELADA' AND COALESCE(substr(cancelada_em,1,10),check_in)>=? AND COALESCE(substr(cancelada_em,1,10),check_in)<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['n'] or 0)
         hoje_reservas=conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0
-        sem_checkin=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in=? AND checkin_realizado_em IS NULL",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
+        chegadas_maduras=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in>=? AND check_in<=? AND check_in<?",(g.hotel_id,inicio.isoformat(),fim.isoformat(),hoje_s)).fetchone()['n'] or 0)
+        sem_checkin=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in>=? AND check_in<=? AND check_in<? AND checkin_realizado_em IS NULL",(g.hotel_id,inicio.isoformat(),fim.isoformat(),hoje_s)).fetchone()['n'] or 0)
         entradas_realizadas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND substr(checkin_realizado_em,1,10)=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
         saidas_previstas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_out=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
         saidas_realizadas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND substr(checkout_realizado_em,1,10)=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
@@ -1879,22 +1900,36 @@ def relatorios_gerenciais(current_user,role):
         for offset in range(1,8):
             data_prev=hoje+datetime.timedelta(days=offset); limite=conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND checkout_realizado_em IS NULL AND check_in<=? AND check_out>?",(g.hotel_id,data_prev.isoformat(),data_prev.isoformat())).fetchone()['n'] or 0
             dias_prev.append({'data':data_prev.isoformat(),'quartos':int(limite),'ocupacao':round((int(limite)/total*100),2) if total else 0})
-        dias_antes=dias_periodo
-        fim_anterior=inicio-datetime.timedelta(days=1); inicio_anterior=fim_anterior-datetime.timedelta(days=dias_antes-1)
-        _,_,_,_,_,ocupacao_anterior,_,_,_,_=carregar_periodo(inicio_anterior,fim_anterior)
+        modo_periodo=request.args.get('periodo','personalizado')
+        if modo_periodo=='mes':
+            fim_anterior=inicio-datetime.timedelta(days=1)
+            inicio_anterior=fim_anterior.replace(day=1)
+            fim_anterior=min(fim_anterior,inicio_anterior+datetime.timedelta(days=fim.day-1))
+        else:
+            fim_anterior=inicio-datetime.timedelta(days=1)
+            inicio_anterior=fim_anterior-datetime.timedelta(days=dias_periodo-1)
+        _,_,gerada_anterior,pendente_anterior,paga_anterior,_,ocupacao_anterior,_,_,_,_=carregar_periodo(inicio_anterior,fim_anterior)
         caixa_anterior=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND data>=? AND data<=?",(g.hotel_id,inicio_anterior.isoformat(),fim_anterior.isoformat())).fetchone()['s'] or 0)
+        despesas_anterior=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='SAIDA' AND data>=? AND data<=?",(g.hotel_id,inicio_anterior.isoformat(),fim_anterior.isoformat())).fetchone()['s'] or 0)
+        despesas_total=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='SAIDA' AND data>=? AND data<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['s'] or 0)
+        inicio_mes=hoje.replace(day=1)
+        _,_,gerada_mes,pendente_mes,paga_mes,_,ocupacao_mes,_,_,_,_=carregar_periodo(inicio_mes,hoje)
+        receita_mes=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND data>=? AND data<=?",(g.hotel_id,inicio_mes.isoformat(),hoje_s)).fetchone()['s'] or 0)
+        despesas_mes=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='SAIDA' AND data>=? AND data<=?",(g.hotel_id,inicio_mes.isoformat(),hoje_s)).fetchone()['s'] or 0)
+        def variacao_percentual(atual,anterior):
+            return round((atual-anterior)/abs(anterior)*100,2) if anterior else (100.0 if atual else 0.0)
         ticket_extra=receita_servicos/pessoas_periodo if pessoas_periodo else 0
         return jsonify({'inicio':inicio.isoformat(),'fim':fim.isoformat(),'dias':dias_periodo,'total_quartos':total,
             'quartos_ocupados':serie[-1]['quartos_ocupados'] if serie else 0,'taxa_ocupacao':round(ocupacao,2),
-            'receita_total':round(receita_caixa,2),'receita_hospedagem':round(gerada,2),'receita_gerada':round(gerada,2),
-            'receita_a_vencer':round(pendente,2),'receita_servicos':round(receita_servicos,2),'adr':round(adr,2),'revpar':round(revpar,2),
-            'cancelamentos':cancelamentos,'no_show':sem_checkin,'no_show_percentual':round(sem_checkin/hoje_reservas*100,2) if hoje_reservas else 0,
+            'receita_total':round(receita_caixa,2),'receita_hospedagem':round(gerada,2),'receita_gerada':round(gerada,2),'receita_paga':round(paga,2),
+            'receita_a_vencer':round(pendente,2),'receita_servicos':round(receita_servicos,2),'despesas_total':round(despesas_total,2),'saldo_caixa':round(receita_caixa-despesas_total,2),
+            'receita_mes':round(receita_mes,2),'receita_gerada_mes':round(gerada_mes,2),'receita_paga_mes':round(paga_mes,2),'receita_pendente_mes':round(pendente_mes,2),'despesas_mes':round(despesas_mes,2),'ocupacao_mes':round(ocupacao_mes,2),'adr':round(adr,2),'revpar':round(revpar,2),
+            'cancelamentos':cancelamentos,'no_show':sem_checkin,'chegadas_maduras':chegadas_maduras,'no_show_percentual':round(sem_checkin/chegadas_maduras*100,2) if chegadas_maduras else 0,
             'checkins_previstos':int(hoje_reservas),'checkins_realizados':entradas_realizadas,'checkouts_previstos':int(saidas_previstas),
             'checkouts_realizados':saidas_realizadas,'hospedes_inhouse':hospedes_inhouse,'ticket_medio_hospede':round(ticket_extra,2),
             'ocupacao_serie':serie,'previsao_ocupacao':dias_prev,'adr_categoria':categorias,'origem_reservas':[dict(x) for x in canais],
-            'comparativo':{'ocupacao_anterior':round(ocupacao_anterior,2),'receita_anterior':round(caixa_anterior,2),
-                'variacao_ocupacao':round(ocupacao-ocupacao_anterior,2),
-                'variacao_receita_percentual':round((receita_caixa-caixa_anterior)/abs(caixa_anterior)*100,2) if caixa_anterior else (100.0 if receita_caixa else 0.0)}}),200
+            'comparativo':{'inicio':inicio_anterior.isoformat(),'fim':fim_anterior.isoformat(),'ocupacao_anterior':round(ocupacao_anterior,2),'receita_anterior':round(caixa_anterior,2),'receita_gerada_anterior':round(gerada_anterior,2),'receita_paga_anterior':round(paga_anterior,2),'receita_pendente_anterior':round(pendente_anterior,2),'despesas_anterior':round(despesas_anterior,2),
+                'variacao_ocupacao':round(ocupacao-ocupacao_anterior,2),'variacao_receita_percentual':variacao_percentual(receita_caixa,caixa_anterior),'variacao_gerada_percentual':variacao_percentual(gerada,gerada_anterior),'variacao_paga_percentual':variacao_percentual(paga,paga_anterior),'variacao_pendente_percentual':variacao_percentual(pendente,pendente_anterior),'variacao_despesas_percentual':variacao_percentual(despesas_total,despesas_anterior)}}),200
     finally: conn.close()
 
 def enforce_user_quota(conn,quantidade_nova=1):

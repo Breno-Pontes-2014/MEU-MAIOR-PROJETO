@@ -149,7 +149,13 @@ function preencherFaixas(){
   });
 }
 async function carregarQuartos(){
-  state.quartos=await jsonFetch('/api/quartos')||[];
+  const podeVerHospedagens=pode('reservations.view');
+  const [quartos,reservas]=await Promise.all([
+    jsonFetch('/api/quartos'),
+    podeVerHospedagens?jsonFetch('/api/reservas'):Promise.resolve([])
+  ]);
+  state.quartos=quartos||[];
+  if(podeVerHospedagens)state.reservas=reservas||[];
   const tbody=document.getElementById('tabela-quartos');tbody.innerHTML='';
   state.quartos.forEach(q=>{
     const tr=document.createElement('tr');
@@ -158,7 +164,26 @@ async function carregarQuartos(){
     tbody.appendChild(tr);
   });
   document.getElementById('contagem-quartos').textContent='('+state.quartos.length+')';
+  const card=document.getElementById('quartos-estadias-card');
+  if(card)card.classList.toggle('hidden',!podeVerHospedagens);
+  renderHospedagensQuartos();
   atualizarPreviaLote();
+}
+function renderHospedagensQuartos(){
+  const resumo=document.getElementById('quartos-estadias-resumo'),tbody=document.getElementById('tabela-hospedagens-quartos');
+  if(!resumo||!tbody||!pode('reservations.view'))return;
+  const rows=(state.reservas||[]).filter(r=>String(r.status||'').toUpperCase()!=='CANCELADA'&&r.quarto_numero);
+  const pagas=rows.filter(r=>String(r.status_pagamento||'').toUpperCase()==='PAGO');
+  const pendentes=rows.filter(r=>String(r.status_pagamento||'').toUpperCase()!=='PAGO');
+  const soma=items=>items.reduce((n,r)=>n+Number(r.valor_total||0),0);
+  resumo.innerHTML=[['Hospedagens',rows.length],['Pagas',pagas.length+' · '+moeda(soma(pagas))],['Pendentes',pendentes.length+' · '+moeda(soma(pendentes))]].map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
+  const filtro=document.getElementById('quartos-filtro-pagamento')?.value||'TODOS';
+  const exibidas=rows.filter(r=>filtro==='TODOS'||String(r.status_pagamento||'PENDENTE').toUpperCase()===filtro);
+  tbody.innerHTML=exibidas.map(r=>{
+    const pago=String(r.status_pagamento||'').toUpperCase()==='PAGO';
+    const acao=!pago&&pode('reservations.pay')?'<button class="btn btn-success" onclick="alterarPagamentoReserva('+Number(r.id)+',true)">Registrar pagamento</button>':'—';
+    return '<tr><td>#'+escapar(r.id)+'</td><td>'+escapar(r.hospede_nome||'Não informado')+'</td><td>'+escapar(r.quarto_numero)+'</td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(pago?'PAGO':'PENDENTE')+'</td><td>'+acao+'</td></tr>';
+  }).join('')||'<tr><td colspan="7" class="empty">Nenhuma hospedagem neste filtro.</td></tr>';
 }
 function calcularLote(qtd,inicial,porAndar){
   const arr=[];
@@ -213,7 +238,7 @@ function alternarNovoHospedeReserva(){const box=document.getElementById('r-novo-
 function limparReservaForm(){document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();}
 function editarReserva(id){const r=state.reservas.find(x=>x.id===id);if(!r)return;switchTab('reservas');document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id;document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;document.getElementById('r-canal').value=r.canal_origem||'Direto';document.getElementById('r-observacoes').value=r.observacoes||'';document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;}
 async function registrarMovimentacaoReserva(id,acao){try{const d=await jsonFetch('/api/reservas/'+id+'/movimentacao',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao})});toast(d.mensagem,'success');await carregarReservas();}catch(e){toast(e.message,'error');}}
-async function alterarPagamentoReserva(id,pago){const forma=pago?(prompt('Forma de pagamento (PIX, cartão, dinheiro etc.):','PIX')||'Não informado'):'Não informado';if(pago&&!confirm('Confirmar que a reserva foi paga e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar a reserva como não paga e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/reservas/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:forma})});toast('Pagamento da reserva atualizado.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
+async function alterarPagamentoReserva(id,pago){const forma=pago?(prompt('Forma de pagamento (PIX, cartão, dinheiro etc.):','PIX')||'Não informado'):'Não informado';if(pago&&!confirm('Confirmar que a reserva foi paga e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar a reserva como não paga e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/reservas/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:forma})});toast('Pagamento da reserva atualizado.','success');await carregarReservas();if(abaAtual==='quartos')renderHospedagensQuartos();if(abaAtual==='financeiro')await carregarFinanceiro();}catch(e){toast(e.message,'error');}}
 async function cancelarReserva(id){if(!confirm('Cancelar esta reserva? O pagamento automático, se houver, será retirado do caixa.'))return;try{await jsonFetch('/api/reservas/'+id+'/cancelar',{method:'PUT'});toast('Reserva cancelada.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
 document.getElementById('form-reserva').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('r-edit-id').value,novo=document.getElementById('r-novo-hospede').classList.contains('hidden')?null:{nome:document.getElementById('r-novo-nome').value,documento:document.getElementById('r-novo-doc').value,telefone:document.getElementById('r-novo-tel').value,email:document.getElementById('r-novo-email').value};const comps=[...document.querySelectorAll('.faixa-input')].map(x=>({faixa_id:parseInt(x.dataset.id,10),quantidade:parseInt(x.value||'0',10)}));const body={hospede_id:novo?null:(parseInt(document.getElementById('r-hospede-id').value,10)||null),novo_hospede:novo,quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,canal_origem:document.getElementById('r-canal').value,observacoes:document.getElementById('r-observacoes').value,composicao:comps};try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();await Promise.all([carregarReservas(),carregarHospedes()]);}catch(e){toast(e.message,'error');}});
 document.getElementById('r-cancel').onclick=limparReservaForm;
@@ -260,10 +285,52 @@ async function excluirEstoque(id){if(!confirm('Excluir este item?'))return;try{a
 document.getElementById('form-estoque').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('e-edit-id').value;const body={item:document.getElementById('e-item').value,categoria:document.getElementById('e-cat').value,quantidade:parseInt(document.getElementById('e-qtd').value,10),preco_unitario:parseFloat(document.getElementById('e-preco').value)};try{await jsonFetch(id?'/api/estoque/'+id:'/api/estoque',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Estoque atualizado.':'Item adicionado.','success');limparEstoqueForm();carregarEstoque();}catch(e){toast(e.message,'error');}});
 document.getElementById('e-cancel').onclick=limparEstoqueForm;
 
-async function carregarFinanceiro(){state.financeiro=await jsonFetch('/api/financeiro')||[];const tb=document.getElementById('tabela-financeiro');tb.innerHTML='';state.financeiro.forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(x.data)+'</td><td>'+badgeStatus(x.tipo)+'</td><td>'+escapar(x.descricao)+'</td><td>'+escapar(x.categoria)+'</td><td>'+moeda(x.valor)+'</td><td>'+escapar(x.origem_tipo||'Manual')+'</td><td>'+(x.origem_tipo?'Automático':'<button class="btn btn-secondary" onclick="editarFinanceiro('+x.id+')">Editar</button>')+'</td>';tb.appendChild(tr);});}
-function limparFinanceiroForm(){document.getElementById('form-fin').reset();document.getElementById('f-edit-id').value='';document.getElementById('f-cat').value='Geral';document.getElementById('f-cancel').classList.add('hidden');document.getElementById('f-submit').textContent='Lançar';document.getElementById('fin-form-title').textContent='Novo lançamento';}
-function editarFinanceiro(id){const x=state.financeiro.find(s=>s.id===id);if(!x||x.origem_tipo)return;switchTab('financeiro');document.getElementById('f-edit-id').value=id;document.getElementById('f-tipo').value=x.tipo;document.getElementById('f-desc').value=x.descricao;document.getElementById('f-valor').value=x.valor;document.getElementById('f-cat').value=x.categoria;document.getElementById('f-cancel').classList.remove('hidden');document.getElementById('f-submit').textContent='Salvar alterações';document.getElementById('fin-form-title').textContent='Editar lançamento';}
-document.getElementById('form-fin').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('f-edit-id').value;const body={tipo:document.getElementById('f-tipo').value,descricao:document.getElementById('f-desc').value,valor:parseFloat(document.getElementById('f-valor').value),categoria:document.getElementById('f-cat').value};try{await jsonFetch(id?'/api/financeiro/'+id:'/api/financeiro',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Lançamento atualizado.':'Lançamento realizado.','success');limparFinanceiroForm();carregarFinanceiro();}catch(e){toast(e.message,'error');}});
+function prepararPeriodoFinanceiro(){
+  const modo=document.getElementById('fin-periodo').value,hoje=new Date();hoje.setHours(12,0,0,0);let ini=new Date(hoje),fim=new Date(hoje);
+  if(modo==='ontem'){ini.setDate(ini.getDate()-1);fim=new Date(ini);}
+  else if(modo==='7dias')ini.setDate(ini.getDate()-6);
+  else if(modo==='mes')ini=new Date(hoje.getFullYear(),hoje.getMonth(),1,12);
+  else if(modo==='personalizado'){
+    document.getElementById('fin-datas-personalizadas').classList.remove('hidden');
+    if(!document.getElementById('fin-inicio').value)document.getElementById('fin-inicio').value=dataLocalISO(ini);
+    if(!document.getElementById('fin-fim').value)document.getElementById('fin-fim').value=dataLocalISO(fim);
+    return;
+  }
+  document.getElementById('fin-datas-personalizadas').classList.add('hidden');
+  document.getElementById('fin-inicio').value=dataLocalISO(ini);document.getElementById('fin-fim').value=dataLocalISO(fim);
+}
+function montarResumoFinanceiro(d){
+  const c=d.comparativo||{},fmtDelta=(v,sufixo='%')=>(Number(v)>=0?'↑ ':'↓ ')+Math.abs(Number(v||0)).toFixed(1)+sufixo+' vs período anterior';
+  const labelComparacao=c.inicio&&c.fim?'Comparação: '+new Date(c.inicio+'T12:00:00').toLocaleDateString('pt-BR')+'–'+new Date(c.fim+'T12:00:00').toLocaleDateString('pt-BR'):'Comparado ao período anterior de mesma duração';
+  document.getElementById('financeiro-resumo').innerHTML=[
+    ['Entradas no caixa',moeda(d.receita_total),fmtDelta(c.variacao_receita_percentual)],
+    ['Saídas',moeda(d.despesas_total),fmtDelta(c.variacao_despesas_percentual)],
+    ['Saldo de caixa',moeda(d.saldo_caixa),'Entradas menos saídas do período'],
+    ['Hospedagem gerada',moeda(d.receita_gerada),fmtDelta(c.variacao_gerada_percentual)],
+    ['Hospedagem recebida',moeda(d.receita_paga),fmtDelta(c.variacao_paga_percentual)],
+    ['A receber em hospedagens',moeda(d.receita_a_vencer),fmtDelta(c.variacao_pendente_percentual)],
+    ['Entradas recebidas no mês',moeda(d.receita_mes),'Desde o primeiro dia do mês'],
+    ['Hospedagem pendente no mês',moeda(d.receita_pendente_mes),'Valor gerado ainda não pago']
+  ].map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
+  const sub=document.getElementById('fin-comparacao');if(sub)sub.textContent=labelComparacao;
+}
+async function carregarFinanceiro(){
+  prepararPeriodoFinanceiro();
+  const modo=document.getElementById('fin-periodo').value,ini=document.getElementById('fin-inicio').value,fim=document.getElementById('fin-fim').value;
+  if(!ini||!fim){toast('Escolha as datas do financeiro.','error');return;}
+  if(fim<ini){toast('A data final deve ser igual ou posterior à inicial.','error');return;}
+  const params='inicio='+encodeURIComponent(ini)+'&fim='+encodeURIComponent(fim);
+  const [rows,resumo]=await Promise.all([jsonFetch('/api/financeiro?'+params),jsonFetch('/api/relatorios?'+params+'&periodo='+encodeURIComponent(modo))]);
+  if(!rows||!resumo)return;
+  state.financeiro=rows;
+  const tb=document.getElementById('tabela-financeiro');tb.innerHTML='';
+  state.financeiro.forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(x.data)+'</td><td>'+badgeStatus(x.tipo)+'</td><td>'+escapar(x.descricao)+'</td><td>'+escapar(x.categoria)+'</td><td>'+moeda(x.valor)+'</td><td>'+escapar(x.origem_tipo||'Manual')+'</td><td>'+(x.origem_tipo?'Automático':'<button class="btn btn-secondary" onclick="editarFinanceiro('+x.id+')">Editar</button>')+'</td>';tb.appendChild(tr);});
+  montarResumoFinanceiro(resumo);
+}
+
+function limparFinanceiroForm(){document.getElementById('form-fin').reset();document.getElementById('f-data').value=dataLocalISO(new Date());document.getElementById('f-edit-id').value='';document.getElementById('f-cat').value='Geral';document.getElementById('f-cancel').classList.add('hidden');document.getElementById('f-submit').textContent='Lançar';document.getElementById('fin-form-title').textContent='Novo lançamento';}
+function editarFinanceiro(id){const x=state.financeiro.find(s=>s.id===id);if(!x||x.origem_tipo)return;switchTab('financeiro');document.getElementById('f-edit-id').value=id;document.getElementById('f-tipo').value=x.tipo;document.getElementById('f-desc').value=x.descricao;document.getElementById('f-valor').value=x.valor;document.getElementById('f-data').value=String(x.data||'').slice(0,10);document.getElementById('f-cat').value=x.categoria;document.getElementById('f-cancel').classList.remove('hidden');document.getElementById('f-submit').textContent='Salvar alterações';document.getElementById('fin-form-title').textContent='Editar lançamento';}
+document.getElementById('form-fin').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('f-edit-id').value;const body={tipo:document.getElementById('f-tipo').value,descricao:document.getElementById('f-desc').value,valor:parseFloat(document.getElementById('f-valor').value),data:document.getElementById('f-data').value,categoria:document.getElementById('f-cat').value};try{await jsonFetch(id?'/api/financeiro/'+id:'/api/financeiro',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Lançamento atualizado.':'Lançamento realizado.','success');limparFinanceiroForm();carregarFinanceiro();}catch(e){toast(e.message,'error');}});
 document.getElementById('f-cancel').onclick=limparFinanceiroForm;
 
 function dataLocalISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
@@ -272,18 +339,41 @@ function desenharGraficoOcupacao(rows){const el=document.getElementById('grafico
 function desenharGraficoOrigem(rows){const el=document.getElementById('grafico-origem'),cores=['#1f4f8f','#12a594','#f59e0b','#a855f7','#ef4444','#64748b','#0ea5e9'],total=(rows||[]).reduce((a,x)=>a+Number(x.total||0),0);if(!total){el.textContent='Sem reservas cadastradas nesse período.';return;}let acc=0;const stops=rows.map((x,i)=>{const start=acc;acc+=Number(x.total||0)/total*100;return cores[i%cores.length]+' '+start+'% '+acc+'%';}).join(',');el.innerHTML='<div class="origin-layout"><div class="donut" style="background:conic-gradient('+stops+')"><div>'+total+'<small>reservas</small></div></div><div class="legend">'+rows.map((x,i)=>'<div><i style="background:'+cores[i%cores.length]+'"></i>'+escapar(x.canal)+' — '+x.total+' ('+(Number(x.total)/total*100).toFixed(0)+'%)</div>').join('')+'</div></div>';}
 async function carregarRelatorios(){
   if(!document.getElementById('rel-inicio').value||!document.getElementById('rel-fim').value)prepararPeriodoRelatorio();
-  const ini=document.getElementById('rel-inicio').value,fim=document.getElementById('rel-fim').value;if(!ini||!fim){toast('Escolha as datas do relatório.','error');return;}
-  const d=await jsonFetch('/api/relatorios?inicio='+encodeURIComponent(ini)+'&fim='+encodeURIComponent(fim));if(!d)return;
+  const ini=document.getElementById('rel-inicio').value,fim=document.getElementById('rel-fim').value,modo=document.getElementById('rel-periodo').value;
+  if(!ini||!fim){toast('Escolha as datas do relatório.','error');return;}
+  if(fim<ini){toast('A data final deve ser igual ou posterior à inicial.','error');return;}
+  const d=await jsonFetch('/api/relatorios?inicio='+encodeURIComponent(ini)+'&fim='+encodeURIComponent(fim)+'&periodo='+encodeURIComponent(modo));if(!d)return;
   const c=d.comparativo||{},delta=Number(c.variacao_ocupacao||0),deltaTexto=(delta>=0?'↑ ':'↓ ')+Math.abs(delta).toFixed(1)+' p.p. vs período anterior';
-  const arr=[['Ocupação média',Number(d.taxa_ocupacao).toFixed(1)+'%',deltaTexto],['Receita no caixa',moeda(d.receita_total),(Number(c.variacao_receita_percentual||0)>=0?'↑ ':'↓ ')+Math.abs(Number(c.variacao_receita_percentual||0)).toFixed(1)+'% vs período anterior'],['Receita gerada',moeda(d.receita_gerada),'Diárias que ocorreram no período'],['A receber',moeda(d.receita_a_vencer),'Parte gerada ainda pendente'],['ADR',moeda(d.adr),'Receita gerada por diária ocupada'],['RevPAR',moeda(d.revpar),'Receita gerada por quarto disponível'],['Cancelamentos',d.cancelamentos,'Reservas canceladas no período'],['Sem check-in hoje',d.no_show,d.no_show_percentual+'% das chegadas previstas'],['Ticket extra por hóspede',moeda(d.ticket_medio_hospede),'Consumo pago além da hospedagem']];
+  const comp=document.getElementById('rel-comparacao');if(comp&&c.inicio&&c.fim)comp.textContent='Comparando com '+new Date(c.inicio+'T12:00:00').toLocaleDateString('pt-BR')+' até '+new Date(c.fim+'T12:00:00').toLocaleDateString('pt-BR')+'.';
+  const pct=(v)=>(Number(v)>=0?'↑ ':'↓ ')+Math.abs(Number(v||0)).toFixed(1)+'% vs período anterior';
+  const arr=[['Ocupação média',Number(d.taxa_ocupacao).toFixed(1)+'%',deltaTexto],
+    ['Entradas no caixa',moeda(d.receita_total),pct(c.variacao_receita_percentual)],
+    ['Saídas no caixa',moeda(d.despesas_total),pct(c.variacao_despesas_percentual)],
+    ['Saldo de caixa',moeda(d.saldo_caixa),'Entradas menos saídas'],
+    ['Hospedagem gerada',moeda(d.receita_gerada),pct(c.variacao_gerada_percentual)],
+    ['Hospedagem recebida',moeda(d.receita_paga),pct(c.variacao_paga_percentual)],
+    ['A receber no período',moeda(d.receita_a_vencer),pct(c.variacao_pendente_percentual)],
+    ['Ganhos no mês (caixa)',moeda(d.receita_mes),'Pagamentos recebidos neste mês'],
+    ['Hospedagem gerada no mês',moeda(d.receita_gerada_mes),'Noites de estadia deste mês'],
+    ['Pendente no mês',moeda(d.receita_pendente_mes),'Hospedagem gerada ainda não paga'],
+    ['ADR',moeda(d.adr),'Receita gerada por diária ocupada'],
+    ['RevPAR',moeda(d.revpar),'Receita gerada por quarto disponível'],
+    ['Cancelamentos',d.cancelamentos,'Reservas canceladas no período'],
+    ['Não comparecimentos',d.no_show,d.no_show_percentual+'% das chegadas vencidas no período'],
+    ['Ticket extra por hóspede',moeda(d.ticket_medio_hospede),'Consumo pago além da hospedagem']];
   document.getElementById('relatorio-metricas').innerHTML=arr.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
-  const ops=[['Check-ins previstos',d.checkins_previstos],['Check-ins realizados',d.checkins_realizados],['Check-outs previstos',d.checkouts_previstos],['Check-outs realizados',d.checkouts_realizados],['Hóspedes in-house',d.hospedes_inhouse]];document.getElementById('relatorio-operacao').innerHTML=ops.map(x=>'<div class="metric"><div class="metric-label">'+x[0]+'</div><div class="metric-value">'+x[1]+'</div></div>').join('');
+  const ops=[['Check-ins previstos hoje',d.checkins_previstos],['Check-ins realizados hoje',d.checkins_realizados],['Check-outs previstos hoje',d.checkouts_previstos],['Check-outs realizados hoje',d.checkouts_realizados],['Hóspedes in-house',d.hospedes_inhouse]];
+  document.getElementById('relatorio-operacao').innerHTML=ops.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
   desenharGraficoOcupacao(d.ocupacao_serie);desenharGraficoOrigem(d.origem_reservas);
   document.getElementById('tabela-previsao').innerHTML=(d.previsao_ocupacao||[]).map(x=>'<div class="forecast-row"><span>'+new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit'})+'</span><div class="forecast-bar"><i style="width:'+Math.max(0,Math.min(100,Number(x.ocupacao)))+'%"></i></div><strong>'+Number(x.ocupacao).toFixed(0)+'%</strong><small>'+x.quartos+'/'+d.total_quartos+' quartos</small></div>').join('')||'Sem quartos cadastrados.';
   document.getElementById('tabela-adr-categoria').innerHTML=(d.adr_categoria||[]).map(x=>'<tr><td>'+escapar(x.categoria)+'</td><td>'+x.diarias+'</td><td>'+moeda(x.receita)+'</td><td>'+moeda(x.adr)+'</td></tr>').join('')||'<tr><td colspan="4" class="empty">Sem diárias no período.</td></tr>';
 }
+
 document.getElementById('rel-periodo').addEventListener('change',()=>{prepararPeriodoRelatorio();if(document.getElementById('rel-periodo').value!=='personalizado')carregarRelatorios();});
-document.getElementById('rel-inicio').addEventListener('change',()=>{if(document.getElementById('rel-periodo').value==='personalizado')carregarRelatorios();});document.getElementById('rel-fim').addEventListener('change',()=>{if(document.getElementById('rel-periodo').value==='personalizado')carregarRelatorios();});
+document.getElementById('fin-periodo').addEventListener('change',()=>{prepararPeriodoFinanceiro();if(document.getElementById('fin-periodo').value!=='personalizado')carregarFinanceiro();});
+document.getElementById('fin-aplicar-periodo').addEventListener('click',carregarFinanceiro);
+document.getElementById('f-data').value=dataLocalISO(new Date());
+document.getElementById('quartos-filtro-pagamento').addEventListener('change',renderHospedagensQuartos);
 async function carregarPainel(){
   const el=document.getElementById('tab-painel');
   const atalhos=[['reservas','Abrir reservas'],['servicos','Abrir pedidos'],['ordens','Abrir ordens de serviço']].filter(([id])=>menuPermitido(id,(menusTenant.find(x=>x.id===id)||{}).permissao));
@@ -302,7 +392,7 @@ async function carregarPainel(){
   try{d=await jsonFetch('/api/relatorios');s=CONTEXTO_USUARIO.role==='admin'?await jsonFetch('/api/assinatura'):null;}
   catch(e){const aviso=document.createElement('div');aviso.className='notice danger';aviso.textContent='Não foi possível carregar os indicadores: '+e.message;el.insertBefore(aviso,metrics);return;}
   if(!d)return;
-  const m=[['Quartos',d.total_quartos],['Ocupados',d.quartos_ocupados],['Ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Receita paga',moeda(d.receita_total)]];
+  const m=[['Quartos',d.total_quartos],['Ocupados hoje',d.quartos_ocupados],['Ocupação média',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Entradas no mês',moeda(d.receita_mes)],['Saldo de caixa no mês',moeda(Number(d.receita_mes||0)-Number(d.despesas_mes||0))],['Hospedagem gerada no mês',moeda(d.receita_gerada_mes)],['A receber no mês',moeda(d.receita_pendente_mes)]];
   document.getElementById('painel-metrics').innerHTML=m.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
   if(s){const card=document.createElement('div');card.className='notice '+(s.ativo?'success':'danger');card.textContent='Plano '+(s.plano_nome||'-')+' | status: '+(s.status||'-')+(s.periodo_fim?' | validade: '+s.periodo_fim:'');document.getElementById('tab-painel').insertBefore(card,document.getElementById('painel-metrics'));}
 }

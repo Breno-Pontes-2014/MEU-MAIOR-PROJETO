@@ -174,6 +174,11 @@ tr:last-child td{border-bottom:0}
           <div class="card-header"><h2 class="card-title">Quartos cadastrados <span class="small" id="contagem-quartos"></span></h2></div>
           <div class="table-wrap"><table><thead><tr><th>Número</th><th>Tipo</th><th>Diária</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-quartos"></tbody></table></div>
         </div>
+<div class="card" id="quartos-estadias-card">
+          <div class="card-header"><div><h2 class="card-title">Hospedagens e pagamentos</h2><p class="card-help">Confira reservas vinculadas aos quartos, valores recebidos e valores pendentes.</p></div><div class="field"><label>Pagamento</label><select id="quartos-filtro-pagamento"><option value="TODOS">Todas</option><option value="PENDENTE">Pendentes</option><option value="PAGO">Pagas</option></select></div></div>
+          <div class="metrics" id="quartos-estadias-resumo"></div>
+          <div class="table-wrap"><table><thead><tr><th>Reserva</th><th>Hóspede</th><th>Quarto</th><th>Estadia</th><th>Total</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-hospedagens-quartos"></tbody></table></div>
+        </div>
       </div>
 
       <div id="painel-hospedes-reserva">
@@ -331,9 +336,16 @@ tr:last-child td{border-bottom:0}
             <div class="field"><label>Tipo</label><select id="f-tipo"><option value="ENTRADA">Entrada</option><option value="SAIDA">Saída</option></select></div>
             <div class="field span-6"><label>Descrição</label><input id="f-desc" required maxlength="200"></div>
             <div class="field"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" required></div>
+            <div class="field"><label>Data do lançamento</label><input id="f-data" type="date" required></div>
             <div class="field"><label>Categoria</label><input id="f-cat" value="Geral" maxlength="80" required></div>
             <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="f-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="f-submit">Lançar</button></div>
           </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Resumo do período</h2><p class="card-help">Caixa mostra pagamentos efetivos; hospedagem gerada e a receber consideram as noites reservadas.</p></div></div>
+          <div class="toolbar"><div class="field"><label>Período</label><select id="fin-periodo"><option value="mes">Mês atual</option><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="personalizado">Personalizado</option></select></div><div id="fin-datas-personalizadas" class="inline-grid hidden"><div class="field"><label>De</label><input id="fin-inicio" type="date"></div><div class="field"><label>Até</label><input id="fin-fim" type="date"></div></div><button class="btn btn-primary" type="button" id="fin-aplicar-periodo">Aplicar período</button></div>
+          <div class="metrics" id="financeiro-resumo"></div>
+          <p class="card-help" id="fin-comparacao"></p>
         </div>
         <div class="card"><div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th>Origem</th><th>Ações</th></tr></thead><tbody id="tabela-financeiro"></tbody></table></div></div>
       </div>
@@ -342,6 +354,7 @@ tr:last-child td{border-bottom:0}
         <div class="card">
           <div class="card-header"><div><h2 class="card-title">Relatórios gerenciais</h2><p class="card-help">A ocupação e as receitas geradas consideram as datas de hospedagem; caixa considera os valores recebidos no período.</p></div></div>
           <div class="toolbar"><div class="field"><label>Período</label><select id="rel-periodo"><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="mes">Mês atual</option><option value="personalizado">Personalizado</option></select></div><div id="rel-datas-personalizadas" class="inline-grid hidden"><div class="field"><label>De</label><input id="rel-inicio" type="date"></div><div class="field"><label>Até</label><input id="rel-fim" type="date"></div></div><button class="btn btn-primary" type="button" onclick="carregarRelatorios()">Aplicar período</button><button class="btn btn-secondary" type="button" onclick="carregarRelatorios()">Atualizar</button></div>
+          <div class="metric-note" id="rel-comparacao"></div>
           <div class="metrics" id="relatorio-metricas"></div>
         </div>
         <div class="card"><div class="card-header"><div><h2 class="card-title">Movimentação de hoje</h2><p class="card-help">Entradas e saídas previstas e realizadas, além dos hóspedes que já fizeram check-in.</p></div></div><div class="metrics" id="relatorio-operacao"></div></div>

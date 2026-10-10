@@ -353,6 +353,7 @@ async function carregarRelatorios(){
     ['Hospedagem gerada',moeda(d.receita_gerada),pct(c.variacao_gerada_percentual)],
     ['Hospedagem recebida',moeda(d.receita_paga),pct(c.variacao_paga_percentual)],
     ['A receber no período',moeda(d.receita_a_vencer),pct(c.variacao_pendente_percentual)],
+    ['Ocupação média no mês',Number(d.ocupacao_mes).toFixed(1)+'%','Até hoje no mês atual'],
     ['Ganhos no mês (caixa)',moeda(d.receita_mes),'Pagamentos recebidos neste mês'],
     ['Hospedagem gerada no mês',moeda(d.receita_gerada_mes),'Noites de estadia deste mês'],
     ['Pendente no mês',moeda(d.receita_pendente_mes),'Hospedagem gerada ainda não paga'],
@@ -392,7 +393,7 @@ async function carregarPainel(){
   try{d=await jsonFetch('/api/relatorios');s=CONTEXTO_USUARIO.role==='admin'?await jsonFetch('/api/assinatura'):null;}
   catch(e){const aviso=document.createElement('div');aviso.className='notice danger';aviso.textContent='Não foi possível carregar os indicadores: '+e.message;el.insertBefore(aviso,metrics);return;}
   if(!d)return;
-  const m=[['Quartos',d.total_quartos],['Ocupados hoje',d.quartos_ocupados],['Ocupação média',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Entradas no mês',moeda(d.receita_mes)],['Saldo de caixa no mês',moeda(Number(d.receita_mes||0)-Number(d.despesas_mes||0))],['Hospedagem gerada no mês',moeda(d.receita_gerada_mes)],['A receber no mês',moeda(d.receita_pendente_mes)]];
+  const m=[['Quartos',d.total_quartos],['Ocupados hoje',d.quartos_ocupados],['Ocupação hoje',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Ocupação média no mês',Number(d.ocupacao_mes).toFixed(2)+'%'],['Entradas no mês',moeda(d.receita_mes)],['Saldo de caixa no mês',moeda(Number(d.receita_mes||0)-Number(d.despesas_mes||0))],['Hospedagem gerada no mês',moeda(d.receita_gerada_mes)],['Hospedagem recebida no mês',moeda(d.receita_paga_mes)],['A receber no mês',moeda(d.receita_pendente_mes)]];
   document.getElementById('painel-metrics').innerHTML=m.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
   if(s){const card=document.createElement('div');card.className='notice '+(s.ativo?'success':'danger');card.textContent='Plano '+(s.plano_nome||'-')+' | status: '+(s.status||'-')+(s.periodo_fim?' | validade: '+s.periodo_fim:'');document.getElementById('tab-painel').insertBefore(card,document.getElementById('painel-metrics'));}
 }

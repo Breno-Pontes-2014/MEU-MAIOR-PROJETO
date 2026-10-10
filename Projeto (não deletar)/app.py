@@ -2,6 +2,7 @@ import os
 import datetime
 import json
 import hashlib
+import re
 import secrets
 import time
 import sqlite3
@@ -13,6 +14,23 @@ from flask import Flask, request, jsonify, render_template_string, redirect, url
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+def load_local_env():
+    """Carrega variáveis de .env local, sem substituir as definidas no sistema."""
+    caminho=os.path.join(os.path.dirname(os.path.abspath(__file__)),'.env')
+    try:
+        with open(caminho,'r',encoding='utf-8-sig') as arquivo:
+            for linha in arquivo:
+                linha=linha.strip()
+                if not linha or linha.startswith('#') or '=' not in linha: continue
+                chave,_,valor=linha.partition('='); chave=chave.strip(); valor=valor.strip()
+                if not chave or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',chave): continue
+                if len(valor)>=2 and valor[0]==valor[-1] and valor[0] in ('"',"'"): valor=valor[1:-1]
+                os.environ.setdefault(chave,valor)
+    except FileNotFoundError:
+        pass
+
+load_local_env()
+
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -23,8 +41,37 @@ except ImportError:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, 'hotel.db')
 DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
+SAAS_TIMEZONE_OFFSET = os.getenv('SAAS_TIMEZONE_OFFSET', '-03:00').strip()
 JWT_SECRET_FILE = os.path.join(BASE_DIR, '.jwt_secret')
+FLASK_SECRET_FILE = os.path.join(BASE_DIR, '.flask_secret')
 TEMPLATES_DIR = BASE_DIR
+
+def saas_local_now():
+    try:
+        if not re.fullmatch(r'[+-](?:0\d|1[0-4]):[0-5]\d',SAAS_TIMEZONE_OFFSET): raise ValueError
+        sinal=-1 if SAAS_TIMEZONE_OFFSET.startswith('-') else 1
+        horas,minutos=(int(x) for x in SAAS_TIMEZONE_OFFSET[1:].split(':',1))
+        if horas==14 and minutos: raise ValueError
+        zona=datetime.timezone(datetime.timedelta(minutes=sinal*(horas*60+minutos)))
+    except (ValueError,IndexError):
+        zona=datetime.timezone(datetime.timedelta(hours=-3))
+    return datetime.datetime.now(zona)
+
+def utc_now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+IS_PRODUCTION = (
+    os.getenv('APP_ENV', '').strip().lower() == 'production'
+    or os.getenv('FLASK_ENV', '').strip().lower() == 'production'
+    or bool(os.getenv('RENDER', '').strip())
+)
+if IS_PRODUCTION:
+    required_production_settings = ('DATABASE_URL', 'FLASK_SECRET_KEY', 'JWT_SECRET')
+    missing_production_settings = [name for name in required_production_settings if not os.getenv(name, '').strip()]
+    if missing_production_settings:
+        raise RuntimeError('Configuração de produção incompleta: defina ' + ', '.join(missing_production_settings))
+    if os.getenv('FLASK_SECRET_KEY', '').strip() == os.getenv('JWT_SECRET', '').strip():
+        raise RuntimeError('FLASK_SECRET_KEY e JWT_SECRET devem ser valores diferentes.')
 
 app = Flask(
     __name__,
@@ -53,21 +100,20 @@ def get_or_create_secret(env_name, file_path=None):
             pass
     return value
 
-app.config['SECRET_KEY'] = get_or_create_secret('FLASK_SECRET_KEY', JWT_SECRET_FILE)
+app.config['SECRET_KEY'] = get_or_create_secret('FLASK_SECRET_KEY', FLASK_SECRET_FILE)
 JWT_SECRET = get_or_create_secret('JWT_SECRET', JWT_SECRET_FILE)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=os.getenv('SESSION_COOKIE_SECURE', '0').lower() in ('1', 'true', 'yes'),
+    SESSION_COOKIE_SECURE=os.getenv('SESSION_COOKIE_SECURE', '1' if IS_PRODUCTION else '0').lower() in ('1', 'true', 'yes'),
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=8),
     MAX_CONTENT_LENGTH=2 * 1024 * 1024
 )
 
-FORCE_HTTPS = os.getenv('FORCE_HTTPS', '0').lower() in ('1', 'true', 'yes')
+FORCE_HTTPS = os.getenv('FORCE_HTTPS', '1' if IS_PRODUCTION else '0').lower() in ('1', 'true', 'yes')
 LOGIN_MAX_FAILURES = 10
 LOGIN_LOCK_SECONDS = 15 * 60
-LOGIN_FAILURES = {}
 
 class DBCursor:
     def __init__(self, connection, cursor):
@@ -190,11 +236,11 @@ ROLE_LABELS = {
 
 ROLE_PERMISSIONS = {
     'admin': {'*'},
-    'gerente': {'rooms.view','rooms.manage','guests.view','guests.manage','categories.view','categories.manage','reservations.view','reservations.manage','reservations.pay','stock.view','stock.manage','finance.view','finance.manage','orders.view','orders.manage','services.view','services.manage','requests.view','requests.manage','reports.view','whatsapp.use'},
-    'recepcao': {'rooms.view','guests.view','guests.manage','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use'},
-    'limpeza': {'rooms.view','orders.view','orders.manage','requests.view','requests.manage'},
-    'manutencao': {'rooms.view','orders.view','orders.manage','requests.view'},
-    'financeiro': {'rooms.view','guests.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view'}
+    'gerente': {'rooms.view','rooms.manage','guests.view','guests.manage','categories.view','categories.manage','reservations.view','reservations.manage','reservations.pay','stock.view','stock.manage','finance.view','finance.manage','orders.view','orders.manage','services.view','services.manage','requests.view','requests.manage','reports.view','whatsapp.use','support.view'},
+    'recepcao': {'rooms.view','guests.view','guests.manage','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use','support.view'},
+    'limpeza': {'rooms.view','orders.view','orders.manage','requests.view','requests.manage','support.view'},
+    'manutencao': {'rooms.view','orders.view','orders.manage','requests.view','support.view'},
+    'financeiro': {'rooms.view','guests.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view','support.view'}
 }
 
 ENDPOINT_PERMISSIONS = {
@@ -206,6 +252,7 @@ ENDPOINT_PERMISSIONS = {
     'gerenciar_financeiro':'finance.manage','editar_financeiro':'finance.manage',
     'gerenciar_ordens':'orders.manage','atualizar_ordem':'orders.manage','editar_ordem':'orders.manage','deletar_ordem':'orders.manage',
     'relatorios_gerenciais':'reports.view',
+    'registrar_movimentacao_reserva':'reservations.manage',
     'api_integracoes':'integrations.view','salvar_integracoes':'integrations.manage','pesquisar_maps':'integrations.manage',
     'criar_checkout_asaas':'subscription.manage','api_assinatura':'subscription.view','api_assinatura_limites':'subscription.view','api_solicitar_plano':'subscription.manage',
     'listar_usuarios_hotel':'team.view','criar_usuario_hotel':'team.manage','editar_usuario_hotel':'team.manage','desativar_usuario_hotel':'team.manage',
@@ -240,24 +287,46 @@ def client_ip():
 
 
 def login_is_locked(key):
-    info = LOGIN_FAILURES.get(key)
-    if not info:
+    conn=get_db()
+    try:
+        key_hash=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+        info=conn.execute('SELECT failure_count,window_started,locked_until FROM login_failures WHERE key_hash=?',(key_hash,)).fetchone()
+        if not info:
+            return False
+        now=time.time()
+        if float(info['locked_until'] or 0)>now:
+            return True
+        if now-float(info['window_started'] or 0)>=LOGIN_LOCK_SECONDS:
+            conn.execute('DELETE FROM login_failures WHERE key_hash=?',(key_hash,)); conn.commit()
         return False
-    if time.time() >= info['until']:
-        LOGIN_FAILURES.pop(key, None)
-        return False
-    return info['count'] >= LOGIN_MAX_FAILURES
+    finally:
+        conn.close()
 
 def register_login_failure(key):
-    now = time.time()
-    info = LOGIN_FAILURES.get(key)
-    if not info or now >= info['until']:
-        LOGIN_FAILURES[key] = {'count': 1, 'until': now + LOGIN_LOCK_SECONDS}
-    else:
-        info['count'] += 1
+    conn=get_db()
+    try:
+        key_hash=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+        now=time.time()
+        info=conn.execute('SELECT failure_count,window_started,locked_until FROM login_failures WHERE key_hash=?',(key_hash,)).fetchone()
+        if not info or now-float(info['window_started'] or 0)>=LOGIN_LOCK_SECONDS or float(info['locked_until'] or 0)>0 and float(info['locked_until'])<=now:
+            count=1; started=now; locked=0.0
+        else:
+            count=int(info['failure_count'] or 0)+1; started=float(info['window_started'] or now)
+            locked=now+LOGIN_LOCK_SECONDS if count>=LOGIN_MAX_FAILURES else float(info['locked_until'] or 0)
+        conn.execute('''INSERT INTO login_failures (key_hash,failure_count,window_started,locked_until) VALUES (?,?,?,?)
+                        ON CONFLICT (key_hash) DO UPDATE SET failure_count=excluded.failure_count,window_started=excluded.window_started,locked_until=excluded.locked_until''',
+                     (key_hash,count,started,locked))
+        conn.commit()
+    finally:
+        conn.close()
 
 def clear_login_failures(key):
-    LOGIN_FAILURES.pop(key, None)
+    conn=get_db()
+    try:
+        key_hash=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+        conn.execute('DELETE FROM login_failures WHERE key_hash=?',(key_hash,)); conn.commit()
+    finally:
+        conn.close()
 
 def add_column_if_missing(cursor, table, column_def):
     column_name = column_def.split()[0]
@@ -279,7 +348,7 @@ def get_or_create_default_hotel(cursor):
         return hotel['id']
     cursor.execute(
         'INSERT INTO hoteis (nome, data_cadastro, local) VALUES (?, ?, ?)',
-        ('Hotel Principal', datetime.date.today().isoformat(), 'Não informado')
+        ('Hotel Principal', saas_local_now().date().isoformat(), 'Não informado')
     )
     return cursor.lastrowid
 
@@ -327,13 +396,13 @@ def ensure_subscription_for_hotel(cursor, hotel_id):
     if sub:
         return
     plano = cursor.execute("SELECT id FROM planos WHERE nome = 'Teste Grátis' LIMIT 1").fetchone()
-    hoje = datetime.date.today()
+    hoje = saas_local_now().date()
     trial_ate = hoje + datetime.timedelta(days=7)
     cursor.execute('''
         INSERT INTO assinaturas
         (hotel_id, plano_id, status, inicio, periodo_fim, trial_ate, gateway, atualizado_em)
         VALUES (?, ?, 'TESTE', ?, ?, ?, 'interno', ?)
-    ''', (hotel_id, plano['id'], hoje.isoformat(), trial_ate.isoformat(), trial_ate.isoformat(), datetime.datetime.utcnow().isoformat()))
+    ''', (hotel_id, plano['id'], hoje.isoformat(), trial_ate.isoformat(), trial_ate.isoformat(), utc_now_iso()))
 
 def get_hotel_integracoes(conn, hotel_id):
     row = conn.execute('SELECT * FROM hotel_integracoes WHERE hotel_id=? LIMIT 1',(hotel_id,)).fetchone()
@@ -351,15 +420,20 @@ def normalizar_url(valor):
     return valor
 
 def maps_embed_url(integracao):
-    key = os.getenv('GOOGLE_MAPS_API_KEY','').strip()
+    key = os.getenv('GEOAPIFY_MAPS_API_KEY','').strip()
     if not key:
         return None
-    place_id = (integracao.get('maps_place_id') or '').strip()
-    endereco = (integracao.get('endereco') or '').strip()
-    query = f'place_id:{place_id}' if place_id else endereco
-    if not query:
+    try:
+        lat = float(integracao.get('latitude'))
+        lon = float(integracao.get('longitude'))
+    except (TypeError, ValueError):
         return None
-    return 'https://www.google.com/maps/embed/v1/place?' + urllib.parse.urlencode({'key':key,'q':query})
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    params = {'style':'osm-bright','width':800,'height':350,'zoom':15,
+              'center':f'lonlat:{lon},{lat}','marker':f'lonlat:{lon},{lat};color:#e11d48;size:medium',
+              'format':'png','apiKey':key}
+    return 'https://maps.geoapify.com/v1/staticmap?' + urllib.parse.urlencode(params)
 
 def get_subscription(conn, hotel_id):
     row = conn.execute('''
@@ -373,7 +447,7 @@ def get_subscription(conn, hotel_id):
     if not row:
         return None
     data = dict(row)
-    hoje = datetime.date.today()
+    hoje = saas_local_now().date()
     ativo = data['status'] == 'ATIVA'
     teste_ok = data['status'] == 'TESTE' and data.get('trial_ate') and hoje <= datetime.date.fromisoformat(data['trial_ate'][:10])
     if data.get('periodo_fim') and data['status'] == 'ATIVA':
@@ -447,13 +521,14 @@ def ensure_servicos_padrao(cursor, hotel_id):
         ('Transfer','Transporte',80.00,'trajeto'),
         ('Almoço','A&B',35.00,'pessoa'),
         ('Jantar','A&B',35.00,'pessoa'),
-        ('Travesseiro extra','Quarto',0.00,'unidade'),
-        ('Cobertor extra','Quarto',0.00,'unidade'),
-        ('Kit higiene','Quarto',0.00,'kit'),
-        ('Berço','Quarto',0.00,'diária'),
-        ('Chave ou cartão extra','Quarto',0.00,'unidade'),
-        ('Estacionamento','Diversos',0.00,'diária'),
-        ('Late check-out','Diversos',0.00,'reserva'),
+        ('Travesseiro extra','Quarto',5.00,'unidade'),
+        ('Cobertor extra','Quarto',10.00,'unidade'),
+        ('Kit higiene','Quarto',8.00,'kit'),
+        ('Berço','Quarto',20.00,'diária'),
+        ('Chave ou cartão extra','Quarto',10.00,'unidade'),
+        ('Estacionamento','Diversos',20.00,'diária'),
+        ('Late check-out','Diversos',50.00,'reserva'),
+        ('Secador de cabelo','Quarto',12.00,'diária'),
         ('Outros','Diversos',0.00,'unidade')
     ]
     for nome,categoria,preco,unidade in padrao:
@@ -461,13 +536,14 @@ def ensure_servicos_padrao(cursor, hotel_id):
             cursor.execute('INSERT INTO servicos (hotel_id,nome,categoria,preco,unidade,ativo) VALUES (?,?,?,?,?,1)',(hotel_id,nome,categoria,preco,unidade))
 
 def ensure_platform_admin(cursor):
-    username=os.getenv('SAAS_ADMIN_INITIAL_USERNAME','ADMIN').strip() or 'ADMIN'
-    password=os.getenv('SAAS_ADMIN_INITIAL_PASSWORD','Senha do SAAS')
-    existente=cursor.execute('SELECT id,role FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone()
-    if existente:
+    username=os.getenv('SAAS_ADMIN_INITIAL_USERNAME','').strip()
+    password=os.getenv('SAAS_ADMIN_INITIAL_PASSWORD','')
+    if not username or not password:
+        return
+    if cursor.execute("SELECT id FROM usuarios WHERE LOWER(username)=LOWER(?) AND role='platform_admin' LIMIT 1",(username,)).fetchone():
         return
     erro=validate_password(password)
-    if erro and not (username.upper()=='ADMIN' and password=='Senha do SAAS'):
+    if erro:
         raise RuntimeError('SAAS_ADMIN_INITIAL_PASSWORD não atende à política de segurança.')
     cursor.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,ativo) VALUES (?,?,?,?,?,1)',
                    (username,username,generate_password_hash(password,method='pbkdf2:sha256'),'platform_admin',None))
@@ -495,11 +571,12 @@ def init_db():
         add_column_if_missing(cursor,'hoteis','possui_estoque INTEGER NOT NULL DEFAULT 1')
         add_column_if_missing(cursor,'hoteis',"maps_api_status TEXT NOT NULL DEFAULT 'nao_tenho'")
         add_column_if_missing(cursor,'hoteis','maps_api_key TEXT')
+        add_column_if_missing(cursor,'hoteis','whatsapp_telefone TEXT')
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
+                username TEXT NOT NULL,
                 nome TEXT,
                 password TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'recepcao',
@@ -572,6 +649,10 @@ def init_db():
                 pago_por INTEGER,
                 financeiro_id INTEGER,
                 criada_por INTEGER,
+                canal_origem TEXT NOT NULL DEFAULT 'Direto',
+                checkin_realizado_em TEXT,
+                checkout_realizado_em TEXT,
+                cancelada_em TEXT,
                 FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
             )
         ''')
@@ -656,6 +737,49 @@ def init_db():
             )
         ''')
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS suporte_tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                assunto TEXT NOT NULL,
+                prioridade TEXT NOT NULL DEFAULT 'NORMAL',
+                status TEXT NOT NULL DEFAULT 'ABERTO',
+                criado_por INTEGER,
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL,
+                primeira_resposta_em TEXT,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS suporte_mensagens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                autor_id INTEGER,
+                autor_role TEXT NOT NULL,
+                mensagem TEXT NOT NULL,
+                criado_em TEXT NOT NULL,
+                FOREIGN KEY (ticket_id) REFERENCES suporte_tickets(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saas_module_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                module TEXT NOT NULL,
+                accessed_at TEXT NOT NULL,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS login_failures (
+                key_hash TEXT PRIMARY KEY,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                window_started REAL NOT NULL,
+                locked_until REAL NOT NULL DEFAULT 0
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_module_usage_date ON saas_module_usage(accessed_at,hotel_id,module)')
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS planos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT UNIQUE NOT NULL,
@@ -683,6 +807,29 @@ def init_db():
                 atualizado_em TEXT NOT NULL,
                 FOREIGN KEY (hotel_id) REFERENCES hoteis(id),
                 FOREIGN KEY (plano_id) REFERENCES planos(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS checkout_assinaturas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hotel_id INTEGER NOT NULL,
+                plano_id INTEGER NOT NULL,
+                external_reference TEXT NOT NULL UNIQUE,
+                checkout_id TEXT UNIQUE,
+                asaas_subscription_id TEXT,
+                status TEXT NOT NULL DEFAULT 'PENDENTE',
+                criado_em TEXT NOT NULL,
+                atualizado_em TEXT NOT NULL,
+                pago_em TEXT,
+                FOREIGN KEY (hotel_id) REFERENCES hoteis(id),
+                FOREIGN KEY (plano_id) REFERENCES planos(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS asaas_pagamentos_processados (
+                payment_id TEXT PRIMARY KEY,
+                checkout_local_id INTEGER NOT NULL,
+                processado_em TEXT NOT NULL
             )
         ''')
         cursor.execute('''
@@ -723,19 +870,18 @@ def init_db():
         for table,coldef in [
             ('hoteis','bloqueado INTEGER NOT NULL DEFAULT 0'),('hoteis','bloqueado_em TEXT'),('hoteis','bloqueio_motivo TEXT'),
             ('usuarios','nome TEXT'),('usuarios','email TEXT'),('usuarios','ativo INTEGER NOT NULL DEFAULT 1'),('usuarios','ultimo_login TEXT'),
+            ('usuarios','telefone TEXT'),('usuarios','whatsapp_notificacoes INTEGER NOT NULL DEFAULT 0'),
             ('reservas','pago_em TEXT'),('reservas','pago_por INTEGER'),('reservas','financeiro_id INTEGER'),('reservas','criada_por INTEGER'),
+            ('reservas','observacoes TEXT'),('reservas',"canal_origem TEXT NOT NULL DEFAULT 'Não informado'"),
+            ('reservas','checkin_realizado_em TEXT'),('reservas','checkout_realizado_em TEXT'),('reservas','cancelada_em TEXT'),
             ('fluxo_caixa','origem_tipo TEXT'),('fluxo_caixa','origem_id INTEGER'),('fluxo_caixa','forma_pagamento TEXT'),('fluxo_caixa','criado_por INTEGER'),
             ('ordens_servico','quarto_id INTEGER'),('ordens_servico','hospede_id INTEGER'),('ordens_servico','solicitante_id INTEGER'),('ordens_servico','responsavel_id INTEGER'),
             ('ordens_servico','prioridade TEXT NOT NULL DEFAULT \'NORMAL\''),('ordens_servico','aberta_em TEXT'),('ordens_servico','concluida_em TEXT'),('ordens_servico','valor REAL NOT NULL DEFAULT 0'),
             ('assinaturas','checkout_externo TEXT')
         ]:
-            try:
-                add_column_if_missing(cursor,table,coldef)
-            except Exception:
-                pass
+            add_column_if_missing(cursor,table,coldef)
 
         ensure_planos(cursor)
-        ensure_platform_admin(cursor)
 
         hotels=cursor.execute('SELECT id FROM hoteis ORDER BY id').fetchall()
         for row in hotels:
@@ -747,14 +893,54 @@ def init_db():
             ensure_subscription_for_hotel(cursor,hid)
             ensure_servicos_padrao(cursor,hid)
 
+        cursor.execute('CREATE TABLE IF NOT EXISTS app_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)')
+        if not cursor.execute("SELECT id FROM app_migrations WHERE id='usuarios_por_hotel_v1'").fetchone():
+            if not cursor.connection.is_postgres:
+                username_unique=False
+                for idx in cursor.execute("PRAGMA index_list('usuarios')").fetchall():
+                    if int(idx['unique']):
+                        cols=[c['name'] for c in cursor.execute(f"PRAGMA index_info('{idx['name']}')").fetchall()]
+                        if cols==['username']:
+                            username_unique=True
+                            break
+                if username_unique:
+                    cursor.execute('''CREATE TABLE usuarios_novo (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, nome TEXT,
+                        password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'recepcao', hotel_id INTEGER,
+                        email TEXT, ativo INTEGER NOT NULL DEFAULT 1, ultimo_login TEXT, telefone TEXT,
+                        whatsapp_notificacoes INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (hotel_id) REFERENCES hoteis(id))''')
+                    cursor.execute('''INSERT INTO usuarios_novo (id,username,nome,password,role,hotel_id,email,ativo,ultimo_login,telefone,whatsapp_notificacoes)
+                                      SELECT id,username,nome,password,role,hotel_id,email,ativo,ultimo_login,telefone,whatsapp_notificacoes FROM usuarios''')
+                    cursor.execute('DROP TABLE usuarios')
+                    cursor.execute('ALTER TABLE usuarios_novo RENAME TO usuarios')
+            else:
+                cursor.execute('ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_username_key')
+            cursor.execute("INSERT INTO app_migrations (id,applied_at) VALUES (?,?)",('usuarios_por_hotel_v1',utc_now_iso()))
+        ensure_platform_admin(cursor)
+        if not cursor.execute("SELECT id FROM app_migrations WHERE id='servicos_precos_sugeridos_v1'").fetchone():
+            precos_sugeridos={
+                'Travesseiro extra':5.00,'Cobertor extra':10.00,'Kit higiene':8.00,
+                'Berço':20.00,'Chave ou cartão extra':10.00,'Estacionamento':20.00,
+                'Late check-out':50.00,'Secador de cabelo':12.00
+            }
+            for nome,preco in precos_sugeridos.items():
+                cursor.execute('UPDATE servicos SET preco=? WHERE nome=? AND preco<=0',(preco,nome))
+            cursor.execute('INSERT INTO app_migrations (id,applied_at) VALUES (?,?)',('servicos_precos_sugeridos_v1',utc_now_iso()))
+
         for table in TENANT_TABLES + ['servicos','pedidos_hospede']:
             cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_hotel_id ON {table}(hotel_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_usuarios_hotel_id ON usuarios(hotel_id)')
+        cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_hotel_username ON usuarios(hotel_id,LOWER(username)) WHERE hotel_id IS NOT NULL')
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_admin_username ON usuarios(LOWER(username)) WHERE role='platform_admin'")
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_reservas_quarto_datas ON reservas(hotel_id,quarto_numero,check_in,check_out)')
         cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_servicos_hotel_nome ON servicos(hotel_id,nome)')
         conn.commit()
     finally:
         conn.close()
+
+# Gunicorn imports app:app, so database setup must also run on import.
+init_db()
 
 def login_required(f):
     @wraps(f)
@@ -783,7 +969,9 @@ def token_required(f):
                     return jsonify({'erro':'Token expirado.'}),401
                 except jwt.InvalidTokenError:
                     return jsonify({'erro':'Token inválido.'}),401
-                user=conn.execute('SELECT id,username,nome,role,hotel_id,ativo,email FROM usuarios WHERE id=? OR username=? LIMIT 1',(data.get('user_id'),data.get('username'))).fetchone()
+                token_user_id=data.get('user_id')
+                if token_user_id is not None:
+                    user=conn.execute('SELECT id,username,nome,role,hotel_id,ativo,email FROM usuarios WHERE id=? LIMIT 1',(token_user_id,)).fetchone()
 
             if not user:
                 return jsonify({'erro':'Usuário não encontrado.'}),401
@@ -822,6 +1010,18 @@ def token_required(f):
 def page_root():
     return redirect(url_for('login'))
 
+@app.route('/index.html')
+def legacy_index_page():
+    return redirect(url_for('login'))
+
+@app.route('/login.html')
+def legacy_login_page():
+    return redirect(url_for('login'))
+
+@app.route('/cadastro.html')
+def legacy_registration_page():
+    return redirect(url_for('registro'))
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method=='POST':
@@ -834,8 +1034,12 @@ def login():
             return render_template_string(LOGIN_TEMPLATE,erro='Muitas tentativas. Tente novamente em alguns minutos.',csrf_token=csrf_token())
         conn=get_db()
         try:
-            user=conn.execute('SELECT * FROM usuarios WHERE username=? LIMIT 1',(username,)).fetchone()
-            if user and senha_compat(user['password'],password):
+            users=conn.execute('SELECT * FROM usuarios WHERE LOWER(username)=LOWER(?) ORDER BY id',(username,)).fetchall()
+            matches=[u for u in users if senha_compat(u['password'],password)]
+            if len(matches)>1:
+                return render_template_string(LOGIN_TEMPLATE,erro='Há contas com o mesmo usuário e senha. Peça ao administrador para definir um usuário de acesso exclusivo para cada conta.',csrf_token=csrf_token())
+            user=matches[0] if matches else None
+            if user:
                 if not int(user['ativo'] or 0):
                     register_login_failure(lock_key)
                     return render_template_string(LOGIN_TEMPLATE,erro='Este usuário está bloqueado.',csrf_token=csrf_token())
@@ -848,7 +1052,7 @@ def login():
                 clear_login_failures(lock_key)
                 if isinstance(user['password'],str) and user['password'].startswith('SAASPBKDF2$'):
                     conn.execute('UPDATE usuarios SET password=? WHERE id=?',(generate_password_hash(password,method='pbkdf2:sha256'),user['id']))
-                conn.execute('UPDATE usuarios SET ultimo_login=? WHERE id=?',(datetime.datetime.utcnow().isoformat(),user['id']))
+                conn.execute('UPDATE usuarios SET ultimo_login=? WHERE id=?',(utc_now_iso(),user['id']))
                 conn.commit()
                 session.clear(); session.permanent=True
                 session['user_id']=user['id']; session['user']=user['username']; session['role']=user['role']; session['hotel_id']=user['hotel_id']
@@ -868,12 +1072,9 @@ def registro():
         hotel_nome = request.form.get('hotel_nome', '').strip()
         servicos_extras = request.form.get('servicos_extras', 'sim').strip().lower() == 'sim'
         possui_estoque = request.form.get('possui_estoque', 'sim').strip().lower() == 'sim'
-        maps_api_status = request.form.get('maps_api_status', 'nao_tenho').strip().lower()
-        if maps_api_status not in ('tenho', 'nao_tenho'):
-            maps_api_status = 'nao_tenho'
-        maps_api_key = request.form.get('maps_api_key', '').strip() or None
-        if maps_api_status == 'nao_tenho':
-            maps_api_key = None
+        # Credenciais de integração ficam no ambiente do servidor, nunca no cadastro do hotel.
+        maps_api_status = 'nao_tenho'
+        maps_api_key = None
 
         if not check_csrf():
             return render_template_string(REGISTER_TEMPLATE, erro='Sessão expirada. Recarregue a página.', csrf_token=csrf_token())
@@ -884,20 +1085,43 @@ def registro():
         if not username or not password or not hotel_nome:
             return render_template_string(REGISTER_TEMPLATE, erro='Preencha todos os campos obrigatórios.', csrf_token=csrf_token())
 
+        faixas_registro=[]
+        nomes_faixa=request.form.getlist('faixa_nome[]')
+        mins_faixa=request.form.getlist('faixa_min[]')
+        maxs_faixa=request.form.getlist('faixa_max[]')
+        adicionais_faixa=request.form.getlist('faixa_adicional[]')
+        try:
+            for i,nome_faixa in enumerate(nomes_faixa):
+                nome_faixa=nome_faixa.strip()[:100]
+                minimo_raw=mins_faixa[i] if i<len(mins_faixa) else ''
+                maximo_raw=maxs_faixa[i] if i<len(maxs_faixa) else ''
+                adicional_raw=adicionais_faixa[i] if i<len(adicionais_faixa) else ''
+                if not nome_faixa and not minimo_raw and not maximo_raw and not adicional_raw:
+                    continue
+                minimo=int(minimo_raw);maximo=int(maximo_raw);adicional=float(adicional_raw.replace(',','.'))
+                if not nome_faixa or minimo<0 or maximo<minimo or maximo>120 or adicional<0:
+                    raise ValueError
+                faixas_registro.append((nome_faixa,minimo,maximo,adicional))
+        except (ValueError,TypeError):
+            return render_template_string(REGISTER_TEMPLATE, erro='Revise as faixas etárias: nome, idades entre 0 e 120 e adicional não negativo.', csrf_token=csrf_token())
+        faixas_registro.sort(key=lambda item:item[1])
+        if not faixas_registro or faixas_registro[0][1]!=0 or faixas_registro[-1][2]!=120 or any(faixas_registro[i][1]<=faixas_registro[i-1][2] for i in range(1,len(faixas_registro))) or any(faixas_registro[i][1]!=faixas_registro[i-1][2]+1 for i in range(1,len(faixas_registro))):
+            return render_template_string(REGISTER_TEMPLATE, erro='As faixas devem cobrir dos 0 aos 120 anos, sem sobreposição nem lacunas.', csrf_token=csrf_token())
+
         conn = get_db()
         cursor = conn.cursor()
         try:
-            existente = cursor.execute('SELECT id FROM usuarios WHERE username = ? LIMIT 1', (username,)).fetchone()
-            if existente:
-                return render_template_string(REGISTER_TEMPLATE, erro='Nome de usuário já está em uso.', csrf_token=csrf_token())
-
-            data_cadastro = datetime.date.today().isoformat()
+            if cursor.execute('SELECT id FROM usuarios WHERE LOWER(username)=LOWER(?) LIMIT 1',(username,)).fetchone():
+                return render_template_string(REGISTER_TEMPLATE,erro='Este usuário já existe. Escolha um nome de acesso exclusivo.',csrf_token=csrf_token())
+            data_cadastro = saas_local_now().date().isoformat()
             cursor.execute('''
                 INSERT INTO hoteis
                 (nome, data_cadastro, local, servicos_extras, possui_estoque, maps_api_status, maps_api_key)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (hotel_nome, data_cadastro, 'Não informado', int(servicos_extras), int(possui_estoque), maps_api_status, maps_api_key))
             hotel_id = cursor.lastrowid
+
+            cursor.executemany('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',[(nome,minimo,maximo,adicional,hotel_id) for nome,minimo,maximo,adicional in faixas_registro])
 
             hashed_pw = generate_password_hash(password, method='pbkdf2:sha256')
             cursor.execute('''
@@ -991,13 +1215,33 @@ def dashboard():
                   'possui_estoque':bool(hotel['possui_estoque']) if hotel else True,
                   'maps_api_status':hotel['maps_api_status'] if hotel else 'nao_tenho',
                   'assinatura':assinatura}
-        return render_template_string(DASHBOARD_TEMPLATE,csrf_token=csrf_token(),contexto_usuario=contexto)
+        menu_items=[
+            {'id':'painel','icone':'PD','nome':'Painel','permissao':'reports.view'},
+            {'id':'quartos','icone':'QT','nome':'Quartos','permissao':'rooms.view'},
+            {'id':'categorias','icone':'CP','nome':'Categorias de pessoas','permissao':'categories.view'},
+            {'id':'reservas','icone':'RS','nome':'Reservas','permissao':'reservations.view'},
+            {'id':'servicos','icone':'SV','nome':'Serviços e pedidos','permissao':'services.view'},
+            {'id':'ordens','icone':'OS','nome':'Ordens de serviço','permissao':'orders.view'},
+            {'id':'equipe','icone':'EQ','nome':'Equipe e acessos','permissao':'team.view'},
+            {'id':'estoque','icone':'ET','nome':'Estoque','permissao':'stock.view'},
+            {'id':'financeiro','icone':'FN','nome':'Financeiro','permissao':'finance.view'},
+            {'id':'relatorios','icone':'RL','nome':'Relatórios','permissao':'reports.view'},
+            {'id':'integracoes','icone':'IN','nome':'Integrações','permissao':'integrations.view'},
+            {'id':'whatsapp','icone':'WA','nome':'WhatsApp','permissao':'whatsapp.use'},
+            {'id':'suporte','icone':'?','nome':'Suporte','permissao':'support.view'}]
+        if user['role']=='platform_admin':
+            menu_items=[{'id':'plataforma','icone':'SA','nome':'Administração SaaS','permissao':'platform'}]
+        else:
+            menu_items=[item for item in menu_items if can(user['role'],item['permissao'])
+                        and not (item['id']=='estoque' and not contexto['possui_estoque'])
+                        and not (item['id']=='servicos' and not contexto['servicos_extras'])]
+        return render_template_string(DASHBOARD_TEMPLATE,csrf_token=csrf_token(),contexto_usuario=contexto,menu_inicial=menu_items)
     finally:
         conn.close()
 
 def sincronizar_status_quartos(conn, hotel_id):
     if not hotel_id: return
-    hoje=datetime.date.today().isoformat()
+    hoje=saas_local_now().date().isoformat()
     quartos=conn.execute('SELECT id,numero,status FROM quartos WHERE hotel_id=?',(hotel_id,)).fetchall()
     for q in quartos:
         if q['status']=='MANUTENCAO':
@@ -1041,7 +1285,7 @@ def reserva_conflito(conn,hotel_id,quarto_numero,check_in,check_out,ignorar_id=N
 
 def sincronizar_status_quartos(conn,hotel_id):
     if not hotel_id: return
-    hoje=datetime.date.today().isoformat()
+    hoje=saas_local_now().date().isoformat()
     for q in conn.execute('SELECT id,numero,status FROM quartos WHERE hotel_id=?',(hotel_id,)).fetchall():
         if q['status']=='MANUTENCAO': continue
         ocupado=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_in<=? AND check_out>? LIMIT 1",(hotel_id,q['numero'],hoje,hoje)).fetchone()
@@ -1058,9 +1302,9 @@ def registrar_entrada_reserva(conn,reserva_id,forma_pagamento='NÃO INFORMADO'):
     if r['financeiro_id']: return r['financeiro_id']
     cur=conn.cursor()
     cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,origem_id,forma_pagamento,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                ('ENTRADA',f"Reserva do quarto {r['quarto_numero']} - {r['check_in']} a {r['check_out']}",float(r['valor_total'] or 0),'Hospedagem',datetime.date.today().isoformat(),g.hotel_id,'RESERVA',r['id'],forma_pagamento,g.current_user_id))
+                ('ENTRADA',f"Reserva do quarto {r['quarto_numero']} - {r['check_in']} a {r['check_out']}",float(r['valor_total'] or 0),'Hospedagem',saas_local_now().date().isoformat(),g.hotel_id,'RESERVA',r['id'],forma_pagamento,g.current_user_id))
     fid=cur.lastrowid
-    conn.execute("UPDATE reservas SET financeiro_id=?,pago_em=?,pago_por=?,status_pagamento='PAGO' WHERE id=? AND hotel_id=?",(fid,datetime.datetime.utcnow().isoformat(),g.current_user_id,reserva_id,g.hotel_id))
+    conn.execute("UPDATE reservas SET financeiro_id=?,pago_em=?,pago_por=?,status_pagamento='PAGO' WHERE id=? AND hotel_id=?",(fid,utc_now_iso(),g.current_user_id,reserva_id,g.hotel_id))
     return fid
 
 @app.route('/api/quartos', methods=['GET'])
@@ -1141,7 +1385,7 @@ def deletar_quarto(current_user,role,qid):
     try:
         q=conn.execute('SELECT * FROM quartos WHERE id=? AND hotel_id=?',(qid,g.hotel_id)).fetchone()
         if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
-        reserva=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_out>? LIMIT 1",(g.hotel_id,q['numero'],datetime.date.today().isoformat())).fetchone()
+        reserva=conn.execute("SELECT id FROM reservas WHERE hotel_id=? AND quarto_numero=? AND status<>'CANCELADA' AND check_out>? LIMIT 1",(g.hotel_id,q['numero'],saas_local_now().date().isoformat())).fetchone()
         if reserva: return jsonify({'erro':'Não é possível excluir um quarto com reserva ativa ou futura.'}),409
         conn.execute('DELETE FROM quartos WHERE id=? AND hotel_id=?',(qid,g.hotel_id)); conn.commit()
         return jsonify({'mensagem':'Quarto excluído.'}),200
@@ -1240,13 +1484,23 @@ def listar_reservas(current_user,role):
 def criar_reserva(current_user,role):
     data=request.get_json(silent=True) or {}
     try:
-        hospede_id=int(data.get('hospede_id')); quarto_numero=str(data.get('quarto_numero') or '').strip(); check_in=str(data.get('check_in') or ''); check_out=str(data.get('check_out') or '')
+        hospede_id=int(data.get('hospede_id')) if data.get('hospede_id') not in (None,'') else None
+        quarto_numero=str(data.get('quarto_numero') or '').strip(); check_in=str(data.get('check_in') or ''); check_out=str(data.get('check_out') or '')
         data_in=datetime.date.fromisoformat(check_in); data_out=datetime.date.fromisoformat(check_out)
     except (TypeError,ValueError): return jsonify({'erro':'Informe hóspede, quarto e datas válidas.'}),400
     if data_out<=data_in: return jsonify({'erro':'O check-out deve ser posterior ao check-in.'}),400
     diarias=(data_out-data_in).days
     conn=get_db()
     try:
+        novo_hospede=data.get('novo_hospede')
+        if isinstance(novo_hospede,dict):
+            nome_novo=str(novo_hospede.get('nome') or '').strip()[:180]
+            if not nome_novo: return jsonify({'erro':'Informe o nome do novo hóspede.'}),400
+            cur=conn.cursor()
+            cur.execute('INSERT INTO hospedes (nome,documento,telefone,email,observacoes,hotel_id) VALUES (?,?,?,?,?,?)',
+                (nome_novo,str(novo_hospede.get('documento') or '').strip()[:40] or None,str(novo_hospede.get('telefone') or '').strip()[:30] or None,str(novo_hospede.get('email') or '').strip()[:160] or None,None,g.hotel_id))
+            hospede_id=cur.lastrowid
+        if not hospede_id: return jsonify({'erro':'Selecione um hóspede ou informe os dados do novo hóspede.'}),400
         if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede não pertence ao hotel.'}),403
         q=conn.execute('SELECT * FROM quartos WHERE numero=? AND hotel_id=?',(quarto_numero,g.hotel_id)).fetchone()
         if not q: return jsonify({'erro':'Quarto não encontrado.'}),404
@@ -1254,8 +1508,11 @@ def criar_reserva(current_user,role):
         extra,det=composicao_reserva(conn,g.hotel_id,data.get('composicao',[]))
         total=round((float(q['preco_diaria'])+extra)*diarias,2)
         cur=conn.cursor()
-        cur.execute('INSERT INTO reservas (hospede_id,quarto_numero,check_in,check_out,detalhes_pessoas,diarias,status,valor_total,status_pagamento,hotel_id,criada_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                    (hospede_id,quarto_numero,check_in,check_out,det,diarias,'CONFIRMADA',total,'PENDENTE',g.hotel_id,g.current_user_id))
+        observacoes=str(data.get('observacoes') or '').strip()[:2000] or None
+        canal=str(data.get('canal_origem') or 'Direto').strip()[:40]
+        if canal not in ('Direto','WhatsApp','Balcão','Booking.com','Expedia','Airbnb','Outro'): canal='Outro'
+        cur.execute('INSERT INTO reservas (hospede_id,quarto_numero,check_in,check_out,detalhes_pessoas,diarias,status,valor_total,status_pagamento,hotel_id,criada_por,observacoes,canal_origem) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (hospede_id,quarto_numero,check_in,check_out,det,diarias,'CONFIRMADA',total,'PENDENTE',g.hotel_id,g.current_user_id,observacoes,canal))
         rid=cur.lastrowid; sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
         return jsonify({'mensagem':'Reserva criada. O pagamento permanece pendente.','valor_total':total,'id':rid}),201
     finally: conn.close()
@@ -1268,8 +1525,16 @@ def editar_reserva(current_user,role,rid):
         r=conn.execute('SELECT * FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()
         if not r: return jsonify({'erro':'Reserva não encontrada.'}),404
         if r['status']=='CANCELADA': return jsonify({'erro':'Reserva cancelada não pode ser editada.'}),409
-        try: hospede_id=int(data.get('hospede_id',r['hospede_id'])); quarto_numero=str(data.get('quarto_numero',r['quarto_numero']) or '').strip(); check_in=str(data.get('check_in',r['check_in'])); check_out=str(data.get('check_out',r['check_out']))
+        try: hospede_id=int(data.get('hospede_id',r['hospede_id']) or 0) or None; quarto_numero=str(data.get('quarto_numero',r['quarto_numero']) or '').strip(); check_in=str(data.get('check_in',r['check_in'])); check_out=str(data.get('check_out',r['check_out']))
         except (TypeError,ValueError): return jsonify({'erro':'Dados inválidos.'}),400
+        novo_hospede=data.get('novo_hospede')
+        if isinstance(novo_hospede,dict):
+            nome_novo=str(novo_hospede.get('nome') or '').strip()[:180]
+            if not nome_novo: return jsonify({'erro':'Informe o nome do novo hóspede.'}),400
+            cur=conn.cursor()
+            cur.execute('INSERT INTO hospedes (nome,documento,telefone,email,observacoes,hotel_id) VALUES (?,?,?,?,?,?)',
+                (nome_novo,str(novo_hospede.get('documento') or '').strip()[:40] or None,str(novo_hospede.get('telefone') or '').strip()[:30] or None,str(novo_hospede.get('email') or '').strip()[:160] or None,None,g.hotel_id))
+            hospede_id=cur.lastrowid
         try: diarias=(datetime.date.fromisoformat(check_out)-datetime.date.fromisoformat(check_in)).days
         except ValueError: return jsonify({'erro':'Datas inválidas.'}),400
         if diarias<1: return jsonify({'erro':'O check-out deve ser posterior ao check-in.'}),400
@@ -1279,7 +1544,10 @@ def editar_reserva(current_user,role,rid):
         if reserva_conflito(conn,g.hotel_id,quarto_numero,check_in,check_out,rid): return jsonify({'erro':'Existe outra reserva conflitante para este quarto.'}),409
         extra,det=composicao_reserva(conn,g.hotel_id,data.get('composicao',[]))
         total=round((float(q['preco_diaria'])+extra)*diarias,2)
-        conn.execute('UPDATE reservas SET hospede_id=?,quarto_numero=?,check_in=?,check_out=?,detalhes_pessoas=?,diarias=?,valor_total=? WHERE id=? AND hotel_id=?',(hospede_id,quarto_numero,check_in,check_out,det,diarias,total,rid,g.hotel_id))
+        observacoes=str(data.get('observacoes',r['observacoes']) or '').strip()[:2000] or None
+        canal=str(data.get('canal_origem',r['canal_origem'] or 'Direto') or 'Direto').strip()[:40]
+        if canal not in ('Direto','WhatsApp','Balcão','Booking.com','Expedia','Airbnb','Outro'): canal='Outro'
+        conn.execute('UPDATE reservas SET hospede_id=?,quarto_numero=?,check_in=?,check_out=?,detalhes_pessoas=?,diarias=?,valor_total=?,observacoes=?,canal_origem=? WHERE id=? AND hotel_id=?',(hospede_id,quarto_numero,check_in,check_out,det,diarias,total,observacoes,canal,rid,g.hotel_id))
         if r['financeiro_id']:
             conn.execute("UPDATE fluxo_caixa SET valor=?,descricao=? WHERE id=? AND hotel_id=? AND origem_tipo='RESERVA' AND origem_id=?",(total,f"Reserva do quarto {quarto_numero} - {check_in} a {check_out}",r['financeiro_id'],g.hotel_id,rid))
         sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
@@ -1315,8 +1583,26 @@ def cancelar_reserva(current_user,role,rid):
         if not r: return jsonify({'erro':'Reserva não encontrada.'}),404
         if r['financeiro_id']:
             conn.execute("DELETE FROM fluxo_caixa WHERE id=? AND hotel_id=? AND origem_tipo='RESERVA' AND origem_id=?",(r['financeiro_id'],g.hotel_id,rid))
-        conn.execute("UPDATE reservas SET status='CANCELADA',status_pagamento='PENDENTE',financeiro_id=NULL,pago_em=NULL,pago_por=NULL WHERE id=? AND hotel_id=?",(rid,g.hotel_id))
+        conn.execute("UPDATE reservas SET status='CANCELADA',cancelada_em=?,status_pagamento='PENDENTE',financeiro_id=NULL,pago_em=NULL,pago_por=NULL WHERE id=? AND hotel_id=?",(saas_local_now().isoformat(),rid,g.hotel_id))
         sincronizar_status_quartos(conn,g.hotel_id); conn.commit(); return jsonify({'mensagem':'Reserva cancelada.'}),200
+    finally: conn.close()
+
+@app.route('/api/reservas/<int:rid>/movimentacao',methods=['PUT'])
+@token_required
+def registrar_movimentacao_reserva(current_user,role,rid):
+    data=request.get_json(silent=True) or {}; acao=str(data.get('acao') or '').strip().lower()
+    if acao not in ('checkin','checkout'): return jsonify({'erro':'Ação inválida.'}),400
+    conn=get_db()
+    try:
+        reserva=conn.execute('SELECT id,status,checkin_realizado_em,checkout_realizado_em FROM reservas WHERE id=? AND hotel_id=?',(rid,g.hotel_id)).fetchone()
+        if not reserva: return jsonify({'erro':'Reserva não encontrada.'}),404
+        if reserva['status']=='CANCELADA': return jsonify({'erro':'Não é possível registrar movimentação de reserva cancelada.'}),409
+        campo='checkin_realizado_em' if acao=='checkin' else 'checkout_realizado_em'
+        if reserva[campo]: return jsonify({'erro':'Esta movimentação já foi registrada.'}),409
+        agora=saas_local_now().isoformat()
+        conn.execute(f'UPDATE reservas SET {campo}=? WHERE id=? AND hotel_id=?',(agora,rid,g.hotel_id))
+        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
+        return jsonify({'mensagem':'Check-in registrado.' if acao=='checkin' else 'Check-out registrado.'}),200
     finally: conn.close()
 
 @app.route('/api/estoque',methods=['GET','POST'])
@@ -1371,7 +1657,7 @@ def gerenciar_financeiro(current_user,role):
             try: valor=float(data.get('valor',0))
             except (TypeError,ValueError): return jsonify({'erro':'Valor inválido.'}),400
             if tipo not in ('ENTRADA','SAIDA') or not desc or valor<0: return jsonify({'erro':'Dados inválidos.'}),400
-            cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,criado_por) VALUES (?,?,?,?,?,?,?,?)',(tipo,desc,valor,cat,str(data.get('data') or datetime.date.today().isoformat()),g.hotel_id,None,g.current_user_id)); conn.commit()
+            cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,criado_por) VALUES (?,?,?,?,?,?,?,?)',(tipo,desc,valor,cat,str(data.get('data') or saas_local_now().date().isoformat()),g.hotel_id,None,g.current_user_id)); conn.commit()
             return jsonify({'mensagem':'Lançamento realizado.','id':cur.lastrowid}),201
         return jsonify([dict(x) for x in conn.execute('SELECT * FROM fluxo_caixa WHERE hotel_id=? ORDER BY id DESC',(g.hotel_id,)).fetchall()]),200
     finally: conn.close()
@@ -1391,6 +1677,52 @@ def editar_financeiro(current_user,role,fid):
         conn.execute('UPDATE fluxo_caixa SET tipo=?,descricao=?,valor=?,categoria=? WHERE id=? AND hotel_id=?',(tipo,desc,valor,cat,fid,g.hotel_id)); conn.commit()
         return jsonify({'mensagem':'Lançamento atualizado.'}),200
     finally: conn.close()
+
+def enviar_notificacao_whatsapp_os(conn, hotel_id, ordem_id):
+    """Envia aviso de OS pela WhatsApp Cloud API, sem impedir a criação da ordem."""
+    token=os.getenv('WHATSAPP_CLOUD_API_ACCESS_TOKEN','').strip()
+    phone_id=os.getenv('WHATSAPP_CLOUD_API_PHONE_NUMBER_ID','').strip()
+    version=os.getenv('WHATSAPP_CLOUD_API_VERSION','').strip()
+    template_name=os.getenv('WHATSAPP_CLOUD_API_TEMPLATE_NAME','').strip()
+    template_language=os.getenv('WHATSAPP_CLOUD_API_TEMPLATE_LANGUAGE','pt_BR').strip() or 'pt_BR'
+    if not (token and phone_id and version):
+        return {'status':'nao_configurada','mensagem':'WhatsApp Cloud API não configurada no servidor.'}
+    row=conn.execute('''SELECT o.*,q.numero AS quarto_numero,q.andar,u.nome AS responsavel_nome,
+                               u.telefone,u.whatsapp_notificacoes,sol.nome AS solicitante_nome
+                        FROM ordens_servico o
+                        LEFT JOIN quartos q ON q.id=o.quarto_id AND q.hotel_id=o.hotel_id
+                        LEFT JOIN usuarios u ON u.id=o.responsavel_id AND u.hotel_id=o.hotel_id
+                        LEFT JOIN usuarios sol ON sol.id=o.solicitante_id AND sol.hotel_id=o.hotel_id
+                        WHERE o.id=? AND o.hotel_id=?''',(ordem_id,hotel_id)).fetchone()
+    if not row or not row['responsavel_id']:
+        return {'status':'sem_responsavel','mensagem':'Ordem criada sem funcionário atribuído.'}
+    if not row['telefone'] or not int(row['whatsapp_notificacoes'] or 0):
+        return {'status':'destinatario_nao_configurado','mensagem':'Funcionário sem telefone ou sem autorização para notificações.'}
+    destino=''.join(ch for ch in str(row['telefone']) if ch.isdigit())
+    if len(destino)<10 or len(destino)>15:
+        return {'status':'telefone_invalido','mensagem':'Telefone do funcionário deve incluir DDI e DDD.'}
+    andar=f" · {row['andar']}º andar" if row['andar'] is not None else ''
+    descricao=str(row['descricao'] or '').strip()
+    mensagem=(f"🔧 Nova ordem de serviço #{ordem_id}\n"
+              f"Quarto {row['quarto_numero'] or row['quarto']}{andar}\n"
+              f"Setor: {row['tipo']}\nResponsável: {row['responsavel_nome'] or 'Equipe'}\n"
+              f"Solicitada por: {row['solicitante_nome'] or 'Recepção'}\n"
+              f"Prioridade: {row['prioridade']}\nDescrição: {descricao}")
+    if template_name:
+        parametros=[str(ordem_id),f"{row['quarto_numero'] or row['quarto']}{andar}",str(row['tipo']),str(row['responsavel_nome'] or 'Equipe'),str(row['solicitante_nome'] or 'Recepção'),str(row['prioridade']),descricao]
+        conteudo={'messaging_product':'whatsapp','to':destino,'type':'template','template':{'name':template_name,'language':{'code':template_language},'components':[{'type':'body','parameters':[{'type':'text','text':valor} for valor in parametros]}]}}
+    else:
+        conteudo={'messaging_product':'whatsapp','to':destino,'type':'text','text':{'body':mensagem}}
+    payload=json.dumps(conteudo,ensure_ascii=False).encode('utf-8')
+    req=urllib.request.Request(f'https://graph.facebook.com/{version}/{phone_id}/messages',data=payload,method='POST',headers={'Authorization':f'Bearer {token}','Content-Type':'application/json'})
+    try:
+        with urllib.request.urlopen(req,timeout=8) as response:
+            if 200<=response.status<300:
+                return {'status':'enviada','mensagem':'Aviso enviado por WhatsApp.'}
+            return {'status':'falha','mensagem':'WhatsApp não confirmou o envio.'}
+    except Exception:
+        app.logger.exception('Falha ao enviar notificação de OS pelo WhatsApp')
+        return {'status':'falha','mensagem':'Não foi possível enviar o aviso. A ordem foi salva.'}
 
 @app.route('/api/ordens',methods=['GET','POST'])
 @token_required
@@ -1416,16 +1748,20 @@ def gerenciar_ordens(current_user,role):
                 except (TypeError,ValueError): return jsonify({'erro':'Responsável inválido.'}),400
                 if not conn.execute("SELECT id FROM usuarios WHERE id=? AND hotel_id=? AND ativo=1",(responsavel_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Responsável inválido.'}),400
             if not tipo or not desc: return jsonify({'erro':'Tipo e descrição são obrigatórios.'}),400
-            cur=conn.cursor(); now=datetime.datetime.utcnow().isoformat()
+            cur=conn.cursor(); now=utc_now_iso()
             cur.execute('INSERT INTO ordens_servico (quarto,tipo,descricao,status,hotel_id,quarto_id,hospede_id,solicitante_id,responsavel_id,prioridade,aberta_em) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                         (q['numero'],tipo,desc,'PENDENTE',g.hotel_id,quarto_id,hospede_id,g.current_user_id,responsavel_id,prioridade,now))
-            oid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Ordem de serviço criada.','id':oid}),201
+            oid=cur.lastrowid; conn.commit()
+            notificacao=enviar_notificacao_whatsapp_os(conn,g.hotel_id,oid)
+            return jsonify({'mensagem':'Ordem de serviço criada.','id':oid,'notificacao_whatsapp':notificacao}),201
         rows=conn.execute('''
-            SELECT o.*,h.nome AS hospede_nome,u.nome AS responsavel_nome,sol.nome AS solicitante_nome
+            SELECT o.*,h.nome AS hospede_nome,u.nome AS responsavel_nome,u.telefone AS responsavel_telefone,
+                   sol.nome AS solicitante_nome,q.andar AS quarto_andar
             FROM ordens_servico o
             LEFT JOIN hospedes h ON h.id=o.hospede_id AND h.hotel_id=o.hotel_id
             LEFT JOIN usuarios u ON u.id=o.responsavel_id AND u.hotel_id=o.hotel_id
             LEFT JOIN usuarios sol ON sol.id=o.solicitante_id AND sol.hotel_id=o.hotel_id
+            LEFT JOIN quartos q ON q.id=o.quarto_id AND q.hotel_id=o.hotel_id
             WHERE o.hotel_id=? ORDER BY CASE o.prioridade WHEN 'URGENTE' THEN 1 WHEN 'ALTA' THEN 2 WHEN 'NORMAL' THEN 3 ELSE 4 END,o.id DESC
         ''',(g.hotel_id,)).fetchall()
         return jsonify([dict(x) for x in rows]),200
@@ -1439,7 +1775,7 @@ def atualizar_ordem(current_user,role,oid):
     conn=get_db()
     try:
         if not conn.execute('SELECT id FROM ordens_servico WHERE id=? AND hotel_id=?',(oid,g.hotel_id)).fetchone(): return jsonify({'erro':'Ordem não encontrada.'}),404
-        concluida=datetime.datetime.utcnow().isoformat() if status=='CONCLUIDA' else None
+        concluida=utc_now_iso() if status=='CONCLUIDA' else None
         conn.execute('UPDATE ordens_servico SET status=?,concluida_em=? WHERE id=? AND hotel_id=?',(status,concluida,oid,g.hotel_id)); conn.commit()
         return jsonify({'mensagem':'Status da OS atualizado.'}),200
     finally: conn.close()
@@ -1481,14 +1817,86 @@ def deletar_ordem(current_user,role,oid):
 def relatorios_gerenciais(current_user,role):
     conn=get_db()
     try:
-        sincronizar_status_quartos(conn,g.hotel_id); conn.commit()
-        total=conn.execute('SELECT COUNT(*) AS t FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['t']
-        ocup=conn.execute("SELECT COUNT(*) AS t FROM quartos WHERE hotel_id=? AND status='OCUPADO'",(g.hotel_id,)).fetchone()['t']
-        receita=conn.execute("SELECT COALESCE(SUM(valor_total),0) AS s FROM reservas WHERE hotel_id=? AND status_pagamento='PAGO' AND status<>'CANCELADA'",(g.hotel_id,)).fetchone()['s'] or 0
-        serv=conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND origem_tipo='PEDIDO'",(g.hotel_id,)).fetchone()['s'] or 0
-        diarias=conn.execute("SELECT COALESCE(SUM(diarias),0) AS s FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND status_pagamento='PAGO'",(g.hotel_id,)).fetchone()['s'] or 0
-        ocupacao=round((ocup/total)*100,2) if total else 0; adr=round(float(receita)/float(diarias),2) if diarias else 0; revpar=round(adr*(ocupacao/100),2)
-        return jsonify({'total_quartos':total,'quartos_ocupados':ocup,'taxa_ocupacao':ocupacao,'receita_total':round(float(receita)+float(serv),2),'receita_hospedagem':round(float(receita),2),'receita_servicos':round(float(serv),2),'adr':adr,'revpar':revpar}),200
+        hoje=saas_local_now().date(); hoje_s=hoje.isoformat()
+        try:
+            inicio=datetime.date.fromisoformat(request.args.get('inicio') or hoje_s)
+            fim=datetime.date.fromisoformat(request.args.get('fim') or hoje_s)
+        except ValueError:
+            return jsonify({'erro':'Informe datas válidas no formato AAAA-MM-DD.'}),400
+        if fim<inicio: return jsonify({'erro':'A data final deve ser igual ou posterior à inicial.'}),400
+        dias_periodo=(fim-inicio).days+1
+        if dias_periodo>366: return jsonify({'erro':'O período máximo do relatório é de 366 dias.'}),400
+        total=int(conn.execute('SELECT COUNT(*) AS t FROM quartos WHERE hotel_id=?',(g.hotel_id,)).fetchone()['t'] or 0)
+
+        def carregar_periodo(dt_ini,dt_fim):
+            dt_fim_exclusivo=dt_fim+datetime.timedelta(days=1)
+            reservas=conn.execute('''SELECT r.*,q.tipo AS categoria_quarto FROM reservas r
+                LEFT JOIN quartos q ON q.numero=r.quarto_numero AND q.hotel_id=r.hotel_id
+                WHERE r.hotel_id=? AND r.status<>'CANCELADA' AND r.check_in<? AND r.check_out>?''',
+                (g.hotel_id,dt_fim_exclusivo.isoformat(),dt_ini.isoformat())).fetchall()
+            quartos_por_dia={}; receita_gerada=0.0; receita_pendente=0.0; noites=0; por_categoria={}; pessoas_reservadas=0
+            for reserva in reservas:
+                try: entrada=datetime.date.fromisoformat(str(reserva['check_in'])[:10]); saida=datetime.date.fromisoformat(str(reserva['check_out'])[:10])
+                except (TypeError,ValueError): continue
+                noites_reserva=max((saida-entrada).days,1); diaria=float(reserva['valor_total'] or 0)/noites_reserva
+                primeiro=max(entrada,dt_ini); ultimo=min(saida,dt_fim_exclusivo)
+                quantidade_noites=max((ultimo-primeiro).days,0)
+                if not quantidade_noites: continue
+                valor_periodo=diaria*quantidade_noites; receita_gerada+=valor_periodo; noites+=quantidade_noites
+                if str(reserva['status_pagamento'] or '').upper()!='PAGO': receita_pendente+=valor_periodo
+                categoria=str(reserva['categoria_quarto'] or 'Sem categoria')
+                grupo=por_categoria.setdefault(categoria,{'receita':0.0,'diarias':0})
+                grupo['receita']+=valor_periodo; grupo['diarias']+=quantidade_noites
+                pessoas=re.findall(r'(\d+)\s*x',str(reserva['detalhes_pessoas'] or ''),flags=re.IGNORECASE)
+                pessoas_reservadas+=sum(int(x) for x in pessoas) if pessoas else 1
+                dia=primeiro
+                while dia<ultimo:
+                    quartos_por_dia[dia.isoformat()]=quartos_por_dia.get(dia.isoformat(),0)+1
+                    dia+=datetime.timedelta(days=1)
+            serie=[]; ocupacao_soma=0.0; capacidade=total*dias_periodo
+            dia=dt_ini
+            while dia<=dt_fim:
+                ocupados=quartos_por_dia.get(dia.isoformat(),0); percentual=(ocupados/total*100) if total else 0
+                serie.append({'data':dia.isoformat(),'quartos_ocupados':ocupados,'ocupacao':round(percentual,2)})
+                ocupacao_soma+=percentual; dia+=datetime.timedelta(days=1)
+            ocupacao_media=ocupacao_soma/dias_periodo if dias_periodo else 0
+            adr=receita_gerada/noites if noites else 0
+            revpar=receita_gerada/capacidade if capacidade else 0
+            categorias=[{'categoria':k,'receita':round(v['receita'],2),'diarias':v['diarias'],'adr':round(v['receita']/v['diarias'],2) if v['diarias'] else 0} for k,v in sorted(por_categoria.items())]
+            return reservas,serie,receita_gerada,receita_pendente,noites,ocupacao_media,adr,revpar,categorias,pessoas_reservadas
+
+        reservas,serie,gerada,pendente,noites,ocupacao,adr,revpar,categorias,pessoas_periodo=carregar_periodo(inicio,fim)
+        receita_caixa=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND data>=? AND data<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['s'] or 0)
+        receita_servicos=float(conn.execute("SELECT COALESCE(SUM(quantidade*preco_unitario),0) AS s FROM pedidos_hospede WHERE hotel_id=? AND status_pagamento='PAGO' AND substr(COALESCE(pago_em,solicitado_em),1,10)>=? AND substr(COALESCE(pago_em,solicitado_em),1,10)<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['s'] or 0)
+        cancelamentos=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status='CANCELADA' AND COALESCE(substr(cancelada_em,1,10),check_in)>=? AND COALESCE(substr(cancelada_em,1,10),check_in)<=?",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchone()['n'] or 0)
+        hoje_reservas=conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0
+        sem_checkin=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in=? AND checkin_realizado_em IS NULL",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
+        entradas_realizadas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND substr(checkin_realizado_em,1,10)=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
+        saidas_previstas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_out=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
+        saidas_realizadas=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND substr(checkout_realizado_em,1,10)=?",(g.hotel_id,hoje_s)).fetchone()['n'] or 0)
+        em_casa=conn.execute("SELECT detalhes_pessoas FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND checkin_realizado_em IS NOT NULL AND checkout_realizado_em IS NULL AND check_in<=? AND check_out>?",(g.hotel_id,hoje_s,hoje_s)).fetchall()
+        hospedes_inhouse=sum((sum(int(x) for x in re.findall(r'(\d+)\s*x',str(r['detalhes_pessoas'] or ''),flags=re.IGNORECASE)) or 1) for r in em_casa)
+        canais=conn.execute("SELECT COALESCE(NULLIF(canal_origem,''),'Direto') AS canal,COUNT(*) AS total FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in>=? AND check_in<=? GROUP BY COALESCE(NULLIF(canal_origem,''),'Direto') ORDER BY total DESC",(g.hotel_id,inicio.isoformat(),fim.isoformat())).fetchall()
+        dias_prev=[]
+        for offset in range(1,8):
+            data_prev=hoje+datetime.timedelta(days=offset); limite=conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND checkout_realizado_em IS NULL AND check_in<=? AND check_out>?",(g.hotel_id,data_prev.isoformat(),data_prev.isoformat())).fetchone()['n'] or 0
+            dias_prev.append({'data':data_prev.isoformat(),'quartos':int(limite),'ocupacao':round((int(limite)/total*100),2) if total else 0})
+        dias_antes=dias_periodo
+        fim_anterior=inicio-datetime.timedelta(days=1); inicio_anterior=fim_anterior-datetime.timedelta(days=dias_antes-1)
+        _,_,_,_,_,ocupacao_anterior,_,_,_,_=carregar_periodo(inicio_anterior,fim_anterior)
+        caixa_anterior=float(conn.execute("SELECT COALESCE(SUM(valor),0) AS s FROM fluxo_caixa WHERE hotel_id=? AND tipo='ENTRADA' AND data>=? AND data<=?",(g.hotel_id,inicio_anterior.isoformat(),fim_anterior.isoformat())).fetchone()['s'] or 0)
+        ticket_extra=receita_servicos/pessoas_periodo if pessoas_periodo else 0
+        return jsonify({'inicio':inicio.isoformat(),'fim':fim.isoformat(),'dias':dias_periodo,'total_quartos':total,
+            'quartos_ocupados':serie[-1]['quartos_ocupados'] if serie else 0,'taxa_ocupacao':round(ocupacao,2),
+            'receita_total':round(receita_caixa,2),'receita_hospedagem':round(gerada,2),'receita_gerada':round(gerada,2),
+            'receita_a_vencer':round(pendente,2),'receita_servicos':round(receita_servicos,2),'adr':round(adr,2),'revpar':round(revpar,2),
+            'cancelamentos':cancelamentos,'no_show':sem_checkin,'no_show_percentual':round(sem_checkin/hoje_reservas*100,2) if hoje_reservas else 0,
+            'checkins_previstos':int(hoje_reservas),'checkins_realizados':entradas_realizadas,'checkouts_previstos':int(saidas_previstas),
+            'checkouts_realizados':saidas_realizadas,'hospedes_inhouse':hospedes_inhouse,'ticket_medio_hospede':round(ticket_extra,2),
+            'ocupacao_serie':serie,'previsao_ocupacao':dias_prev,'adr_categoria':categorias,'origem_reservas':[dict(x) for x in canais],
+            'comparativo':{'ocupacao_anterior':round(ocupacao_anterior,2),'receita_anterior':round(caixa_anterior,2),
+                'variacao_ocupacao':round(ocupacao-ocupacao_anterior,2),
+                'variacao_receita_percentual':round((receita_caixa-caixa_anterior)/abs(caixa_anterior)*100,2) if caixa_anterior else (100.0 if receita_caixa else 0.0)}}),200
     finally: conn.close()
 
 def enforce_user_quota(conn,quantidade_nova=1):
@@ -1508,7 +1916,7 @@ def listar_usuarios_hotel(current_user,role):
     if not hotel_admin_only(role): return jsonify({'erro':'Apenas o administrador do hotel pode gerenciar a equipe.'}),403
     conn=get_db()
     try:
-        rows=conn.execute('SELECT id,username,nome,role,email,ativo,ultimo_login FROM usuarios WHERE hotel_id=? ORDER BY ativo DESC,nome,username',(g.hotel_id,)).fetchall()
+        rows=conn.execute('SELECT id,username,nome,role,email,ativo,ultimo_login,telefone,whatsapp_notificacoes FROM usuarios WHERE hotel_id=? ORDER BY ativo DESC,nome,username',(g.hotel_id,)).fetchall()
         return jsonify([dict(x,role_label=ROLE_LABELS.get(x['role'],x['role'])) for x in rows]),200
     finally: conn.close()
 
@@ -1519,6 +1927,9 @@ def criar_usuario_hotel(current_user,role):
     data=request.get_json(silent=True) or {}
     username=str(data.get('username') or '').strip()[:80]; nome=str(data.get('nome') or username).strip()[:160]
     email=str(data.get('email') or '').strip()[:160] or None; senha=str(data.get('password') or '')
+    telefone=str(data.get('telefone') or '').strip()[:40] or None; wa_optin=1 if data.get('whatsapp_notificacoes') else 0
+    digitos_telefone=''.join(ch for ch in (telefone or '') if ch.isdigit())
+    if wa_optin and not 10<=len(digitos_telefone)<=15: return jsonify({'erro':'Informe o telefone com DDI e DDD para ativar avisos por WhatsApp.'}),400
     perfil=str(data.get('role') or 'recepcao').strip()
     if perfil not in ROLE_LABELS or perfil=='platform_admin': return jsonify({'erro':'Perfil inválido.'}),400
     if not username or not senha: return jsonify({'erro':'Usuário e senha são obrigatórios.'}),400
@@ -1526,12 +1937,12 @@ def criar_usuario_hotel(current_user,role):
     if erro: return jsonify({'erro':erro}),400
     conn=get_db()
     try:
-        if conn.execute('SELECT id FROM usuarios WHERE username=?',(username,)).fetchone(): return jsonify({'erro':'Este nome de usuário já está em uso.'}),409
+        if conn.execute('SELECT id FROM usuarios WHERE LOWER(username)=LOWER(?)',(username,)).fetchone(): return jsonify({'erro':'Este usuário já está em uso. Escolha um nome de acesso exclusivo.'}),409
         ok,mensagem=enforce_user_quota(conn,1)
         if not ok: return jsonify({'erro':mensagem}),403
         cur=conn.cursor()
-        cur.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,email,ativo) VALUES (?,?,?,?,?,?,1)',
-                    (username,nome,generate_password_hash(senha,method='pbkdf2:sha256'),perfil,g.hotel_id,email))
+        cur.execute('INSERT INTO usuarios (username,nome,password,role,hotel_id,email,ativo,telefone,whatsapp_notificacoes) VALUES (?,?,?,?,?,?,1,?,?)',
+                    (username,nome,generate_password_hash(senha,method='pbkdf2:sha256'),perfil,g.hotel_id,email,telefone,wa_optin))
         uid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Usuário criado.','id':uid}),201
     finally: conn.close()
 
@@ -1545,6 +1956,10 @@ def editar_usuario_hotel(current_user,role,uid):
         if not u: return jsonify({'erro':'Usuário não encontrado.'}),404
         novo_nome=str(data.get('nome',u['nome'] or u['username']) or u['username']).strip()[:160]
         email=str(data.get('email',u['email'] or '') or '').strip()[:160] or None
+        telefone=str(data.get('telefone',u['telefone'] or '') or '').strip()[:40] or None
+        wa_optin=1 if bool(data.get('whatsapp_notificacoes',u['whatsapp_notificacoes'] or 0)) else 0
+        digitos_telefone=''.join(ch for ch in (telefone or '') if ch.isdigit())
+        if wa_optin and not 10<=len(digitos_telefone)<=15: return jsonify({'erro':'Informe o telefone com DDI e DDD para ativar avisos por WhatsApp.'}),400
         perfil=str(data.get('role',u['role']) or u['role'])
         ativo=1 if bool(data.get('ativo',u['ativo'])) else 0
         if perfil not in ROLE_LABELS or perfil=='platform_admin': return jsonify({'erro':'Perfil inválido.'}),400
@@ -1553,7 +1968,7 @@ def editar_usuario_hotel(current_user,role,uid):
         if u['role']=='admin' and (not ativo or perfil!='admin'):
             outros=conn.execute("SELECT COUNT(*) AS total FROM usuarios WHERE hotel_id=? AND role='admin' AND ativo=1 AND id<>?",(g.hotel_id,uid)).fetchone()['total']
             if int(outros)==0: return jsonify({'erro':'O hotel precisa manter pelo menos um administrador ativo.'}),409
-        campos=['nome=?','email=?','role=?','ativo=?']; params=[novo_nome,email,perfil,ativo]
+        campos=['nome=?','email=?','role=?','ativo=?','telefone=?','whatsapp_notificacoes=?']; params=[novo_nome,email,perfil,ativo,telefone,wa_optin]
         senha=data.get('password')
         if senha not in (None,''):
             senha_erro=validate_password(str(senha))
@@ -1631,9 +2046,9 @@ def registrar_entrada_pedido(conn,pedido_id,forma_pagamento='NÃO INFORMADO'):
     if p['financeiro_id']: return p['financeiro_id']
     total=round(float(p['quantidade'] or 0)*float(p['preco_unitario'] or 0),2)
     cur=conn.cursor(); cur.execute('INSERT INTO fluxo_caixa (tipo,descricao,valor,categoria,data,hotel_id,origem_tipo,origem_id,forma_pagamento,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                                    ('ENTRADA',f"Pedido do hóspede - {p['item']} - quarto {p['quarto_id'] or ''}",total,'Serviços',datetime.date.today().isoformat(),g.hotel_id,'PEDIDO',p['id'],forma_pagamento,g.current_user_id))
+                                    ('ENTRADA',f"Pedido do hóspede - {p['item']} - quarto {p['quarto_id'] or ''}",total,'Serviços',saas_local_now().date().isoformat(),g.hotel_id,'PEDIDO',p['id'],forma_pagamento,g.current_user_id))
     fid=cur.lastrowid
-    conn.execute("UPDATE pedidos_hospede SET status_pagamento='PAGO',pago_em=?,pago_por=?,financeiro_id=? WHERE id=? AND hotel_id=?",(datetime.datetime.utcnow().isoformat(),g.current_user_id,fid,pedido_id,g.hotel_id))
+    conn.execute("UPDATE pedidos_hospede SET status_pagamento='PAGO',pago_em=?,pago_por=?,financeiro_id=? WHERE id=? AND hotel_id=?",(utc_now_iso(),g.current_user_id,fid,pedido_id,g.hotel_id))
     return fid
 
 @app.route('/api/pedidos',methods=['GET','POST'])
@@ -1642,6 +2057,8 @@ def listar_pedidos(current_user,role):
     conn=get_db()
     try:
         if request.method=='POST':
+            if not can(role,'requests.manage'):
+                return jsonify({'erro':'Seu perfil não pode criar pedidos.'}),403
             data=request.get_json(silent=True) or {}
             reserva_id=data.get('reserva_id'); quarto_id=data.get('quarto_id'); hospede_id=data.get('hospede_id'); servico_id=data.get('servico_id')
             try:
@@ -1655,8 +2072,11 @@ def listar_pedidos(current_user,role):
                 if not conn.execute('SELECT id FROM hospedes WHERE id=? AND hotel_id=?',(hospede_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Hóspede inválido.'}),403
             if reserva_id not in (None,''):
                 try: reserva_id=int(reserva_id)
-                except (TypeError,ValueError): reserva_id=None
-                if reserva_id and not conn.execute('SELECT id FROM reservas WHERE id=? AND hotel_id=?',(reserva_id,g.hotel_id)).fetchone(): return jsonify({'erro':'Reserva inválida.'}),400
+                except (TypeError,ValueError): return jsonify({'erro':'Reserva inválida.'}),400
+                reserva=conn.execute('SELECT id,quarto_numero,hospede_id FROM reservas WHERE id=? AND hotel_id=?',(reserva_id,g.hotel_id)).fetchone()
+                if not reserva: return jsonify({'erro':'Reserva inválida.'}),400
+                if str(reserva['quarto_numero'])!=str(q['numero']): return jsonify({'erro':'O quarto selecionado não corresponde à reserva.'}),400
+                if hospede_id and reserva['hospede_id'] and int(hospede_id)!=int(reserva['hospede_id']): return jsonify({'erro':'O hóspede selecionado não corresponde à reserva.'}),400
             service=None
             if servico_id not in (None,''):
                 try: servico_id=int(servico_id)
@@ -1669,7 +2089,7 @@ def listar_pedidos(current_user,role):
             except (TypeError,ValueError): return jsonify({'erro':'Quantidade ou preço inválido.'}),400
             if quantidade<=0 or preco<0 or not item: return jsonify({'erro':'Informe item, quantidade e preço válidos.'}),400
             cur=conn.cursor(); cur.execute('INSERT INTO pedidos_hospede (hotel_id,reserva_id,quarto_id,hospede_id,servico_id,item,descricao,quantidade,preco_unitario,status,status_pagamento,solicitado_em,criado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (g.hotel_id,reserva_id,quarto_id,hospede_id,servico_id,item,descricao,quantidade,preco,'ABERTO','PENDENTE',datetime.datetime.utcnow().isoformat(),g.current_user_id))
+                (g.hotel_id,reserva_id,quarto_id,hospede_id,servico_id,item,descricao,quantidade,preco,'ABERTO','PENDENTE',utc_now_iso(),g.current_user_id))
             pid=cur.lastrowid; conn.commit(); return jsonify({'mensagem':'Pedido lançado para o quarto.','id':pid,'total':round(quantidade*preco,2)}),201
         rows=conn.execute('''
             SELECT p.*,h.nome AS hospede_nome,q.numero AS quarto_numero,s.nome AS servico_nome
@@ -1751,7 +2171,12 @@ def marcar_pagamento_pedido(current_user,role,pid):
 # ==========================================
 def asaas_base_url():
     ambiente=os.getenv('ASAAS_ENV','sandbox').strip().lower()
-    return os.getenv('ASAAS_BASE_URL','').strip().rstrip('/') or ('https://api.asaas.com/v3' if ambiente=='producao' else 'https://api-sandbox.asaas.com/v3')
+    url_configurada=os.getenv('ASAAS_BASE_URL','').strip().rstrip('/')
+    if url_configurada:
+        return url_configurada
+    if ambiente in ('producao','production','prod'):
+        return 'https://api.asaas.com/v3'
+    return 'https://api-sandbox.asaas.com/v3'
 
 @app.route('/api/assinatura/checkout', methods=['POST'])
 @token_required
@@ -1795,9 +2220,14 @@ def criar_checkout_asaas(current_user, role):
             }],
             'subscription':{
                 'cycle':'MONTHLY',
-                'nextDueDate':(datetime.date.today()+datetime.timedelta(days=1)).isoformat()
+                'nextDueDate':(saas_local_now().date()+datetime.timedelta(days=1)).isoformat()
             }
         }
+
+        agora=utc_now_iso()
+        conn.execute('INSERT INTO checkout_assinaturas (hotel_id,plano_id,external_reference,status,criado_em,atualizado_em) VALUES (?,?,?,?,?,?)',
+                     (g.hotel_id,plano_id,referencia,'CRIANDO',agora,agora))
+        conn.commit()
 
         req=urllib.request.Request(
             asaas_base_url()+'/checkouts',
@@ -1813,18 +2243,18 @@ def criar_checkout_asaas(current_user, role):
             with urllib.request.urlopen(req,timeout=15) as response:
                 body=json.loads(response.read().decode('utf-8'))
         except Exception:
+            conn.execute('UPDATE checkout_assinaturas SET status=?,atualizado_em=? WHERE external_reference=?',('ERRO',utc_now_iso(),referencia)); conn.commit()
             return jsonify({'erro':'Não foi possível criar o Checkout Asaas. Verifique ambiente e credenciais.'}),502
 
-        checkout_id=body.get('id')
-        checkout_url=body.get('link') or body.get('url')
-        if checkout_id and not checkout_url:
-            checkout_url='https://asaas.com/checkoutSession/show?id='+urllib.parse.quote(str(checkout_id))
-
-        sub=conn.execute('SELECT id FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(g.hotel_id,)).fetchone()
-        if sub:
-            conn.execute('UPDATE assinaturas SET gateway=?,checkout_externo=?,atualizado_em=? WHERE id=?',
-                         ('asaas:'+os.getenv('ASAAS_ENV','sandbox'),str(checkout_id or referencia),datetime.datetime.utcnow().isoformat(),sub['id']))
-            conn.commit()
+        checkout_id=str(body.get('id') or '').strip()
+        if not checkout_id:
+            conn.execute('UPDATE checkout_assinaturas SET status=?,atualizado_em=? WHERE external_reference=?',('ERRO',utc_now_iso(),referencia)); conn.commit()
+            app.logger.error('Asaas criou resposta sem ID de checkout para referência interna %s',referencia)
+            return jsonify({'erro':'O Asaas não retornou o identificador do Checkout.'}),502
+        checkout_url=body.get('link') or body.get('url') or ('https://asaas.com/checkoutSession/show?id='+urllib.parse.quote(checkout_id))
+        conn.execute('UPDATE checkout_assinaturas SET checkout_id=?,status=?,atualizado_em=? WHERE external_reference=?',
+                     (checkout_id,'PENDENTE',utc_now_iso(),referencia))
+        conn.commit()
 
         return jsonify({'mensagem':'Checkout criado. A assinatura só será liberada após confirmação do pagamento por webhook.','checkout_url':checkout_url,'checkout_id':checkout_id,'referencia':referencia}),200
     finally:
@@ -1846,6 +2276,12 @@ def api_integracoes(current_user, role):
     conn=get_db()
     try:
         integracao=get_hotel_integracoes(conn,g.hotel_id) or {'hotel_id':g.hotel_id}
+        hotel=conn.execute('SELECT whatsapp_telefone FROM hoteis WHERE id=?',(g.hotel_id,)).fetchone()
+        integracao['whatsapp_telefone']=hotel['whatsapp_telefone'] if hotel else None
+        integracao['whatsapp_api_configurada']=bool(os.getenv('WHATSAPP_CLOUD_API_ACCESS_TOKEN','').strip() and os.getenv('WHATSAPP_CLOUD_API_PHONE_NUMBER_ID','').strip() and os.getenv('WHATSAPP_CLOUD_API_VERSION','').strip())
+        integracao['geoapify_api_configurada']=bool(os.getenv('GEOAPIFY_API_KEY','').strip())
+        integracao['geoapify_maps_configurada']=bool(os.getenv('GEOAPIFY_MAPS_API_KEY','').strip())
+        integracao['asaas_configurada']=bool(os.getenv('ASAAS_API_KEY','').strip() and os.getenv('ASAAS_WEBHOOK_TOKEN','').strip() and os.getenv('SAAS_PUBLIC_URL','').strip())
         integracao['maps_embed_url']=maps_embed_url(integracao)
         integracao['webhook_asaas_url']=os.getenv('SAAS_PUBLIC_URL','').strip().rstrip('/')+'/webhooks/asaas' if os.getenv('SAAS_PUBLIC_URL','').strip() else request.url_root.rstrip('/')+'/webhooks/asaas'
         return jsonify(integracao),200
@@ -1869,9 +2305,12 @@ def salvar_integracoes(current_user, role):
         return jsonify({'erro':'Latitude/longitude inválidas.'}),400
     if latitude is not None and not -90 <= latitude <= 90: return jsonify({'erro':'Latitude inválida.'}),400
     if longitude is not None and not -180 <= longitude <= 180: return jsonify({'erro':'Longitude inválida.'}),400
+    whatsapp_telefone=''.join(ch for ch in str(data.get('whatsapp_telefone') or '') if ch.isdigit()) or None
+    if whatsapp_telefone and not 10<=len(whatsapp_telefone)<=15:
+        return jsonify({'erro':'Informe o WhatsApp do hotel com DDI e DDD (10 a 15 dígitos).'}),400
     conn=get_db()
     try:
-        now=datetime.datetime.utcnow().isoformat()
+        now=utc_now_iso()
         values=(g.hotel_id,urls['booking_url'],urls['airbnb_url'],urls['expedia_url'],urls['hoteis_url'],urls['website_url'],
                 str(data.get('maps_place_id') or '').strip()[:300] or None,urls['maps_url'],
                 str(data.get('maps_nome') or '').strip()[:200] or None,str(data.get('endereco') or '').strip()[:500] or None,
@@ -1882,6 +2321,7 @@ def salvar_integracoes(current_user, role):
                          values[1:]+(g.hotel_id,))
         else:
             conn.execute('''INSERT INTO hotel_integracoes (hotel_id,booking_url,airbnb_url,expedia_url,hoteis_url,website_url,maps_place_id,maps_url,maps_nome,endereco,latitude,longitude,atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',values)
+        conn.execute('UPDATE hoteis SET whatsapp_telefone=? WHERE id=?',(whatsapp_telefone,g.hotel_id))
         conn.commit()
         return jsonify({'mensagem':'Integrações salvas com sucesso.','integracao':get_hotel_integracoes(conn,g.hotel_id)}),200
     finally:
@@ -1890,28 +2330,29 @@ def salvar_integracoes(current_user, role):
 @app.route('/api/integracoes/maps/pesquisar', methods=['POST'])
 @token_required
 def pesquisar_maps(current_user, role):
-    api_key=os.getenv('GOOGLE_MAPS_API_KEY','').strip()
+    api_key=os.getenv('GEOAPIFY_API_KEY','').strip()
     if not api_key:
-        return jsonify({'erro':'Configure GOOGLE_MAPS_API_KEY no ambiente do servidor.'}),503
+        return jsonify({'erro':'Configure GEOAPIFY_API_KEY no arquivo .env do servidor.'}),503
     data=request.get_json(silent=True) or {}
     consulta=str(data.get('q') or '').strip()
     if len(consulta)<3 or len(consulta)>300:
         return jsonify({'erro':'Informe o nome ou endereço do hotel (3 a 300 caracteres).'}),400
-    payload=json.dumps({'textQuery':consulta,'pageSize':5}).encode('utf-8')
-    req=urllib.request.Request('https://places.googleapis.com/v1/places:searchText',data=payload,method='POST',
-        headers={'Content-Type':'application/json','X-Goog-Api-Key':api_key,
-                 'X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location,places.googleMapsUri'})
+    params=urllib.parse.urlencode({'text':consulta,'lang':'pt','limit':5,'format':'json','apiKey':api_key})
+    req=urllib.request.Request('https://api.geoapify.com/v1/geocode/search?'+params,method='GET')
     try:
         with urllib.request.urlopen(req,timeout=10) as response:
             raw=json.loads(response.read().decode('utf-8'))
     except Exception:
-        return jsonify({'erro':'Não foi possível consultar o Google Maps agora.'}),502
+        return jsonify({'erro':'Não foi possível consultar Geoapify agora. Verifique a chave e o limite do plano.'}),502
     resultados=[]
-    for p in raw.get('places',[]):
-        loc=p.get('location') or {}
-        resultados.append({'id':p.get('id'),'nome':(p.get('displayName') or {}).get('text'),
-                           'endereco':p.get('formattedAddress'),'latitude':loc.get('latitude'),
-                           'longitude':loc.get('longitude'),'maps_url':p.get('googleMapsUri')})
+    for p in raw.get('results',[]):
+        lat,lon=p.get('lat'),p.get('lon')
+        nome=p.get('name') or p.get('address_line1') or p.get('formatted')
+        maps_url=(f'https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=16/{lat}/{lon}'
+                  if lat is not None and lon is not None else None)
+        resultados.append({'id':p.get('place_id'),'nome':nome,
+                           'endereco':p.get('formatted'),'latitude':lat,
+                           'longitude':lon,'maps_url':maps_url})
     return jsonify({'resultados':resultados}),200
 
 # ==========================================
@@ -1932,72 +2373,130 @@ def webhook_asaas():
         event_id=hashlib.sha256(request.get_data(cache=False)).hexdigest()
     event_type=str(data.get('event') or data.get('event_type') or '').upper()[:120]
     payload=json.dumps(data,ensure_ascii=False,separators=(',',':'))
-    now=datetime.datetime.utcnow().isoformat()
+    now=utc_now_iso()
+
+    payment=data.get('payment') if isinstance(data.get('payment'),dict) else {}
+    checkout=data.get('checkout') if isinstance(data.get('checkout'),dict) else {}
+    subscription=data.get('subscription') if isinstance(data.get('subscription'),dict) else {}
+    external_subscription=payment.get('subscription') or subscription.get('id')
+    if isinstance(external_subscription,dict):
+        external_subscription=external_subscription.get('id')
+    external_reference=(payment.get('externalReference') or checkout.get('externalReference') or
+                        subscription.get('externalReference') or data.get('externalReference'))
+    checkout_id=checkout.get('id') or data.get('checkoutId')
 
     conn=get_db()
     try:
         existente=conn.execute('SELECT id,status FROM webhook_eventos WHERE provider=? AND event_id=?',('asaas',event_id)).fetchone()
         if existente:
-            return jsonify({'ok':True,'duplicado':True}),200
+            return jsonify({'ok':True,'duplicado':True,'status':existente['status']}),200
 
-        hotel_id=None
-        payment=data.get('payment') if isinstance(data.get('payment'),dict) else {}
-        subscription=data.get('subscription') if isinstance(data.get('subscription'),dict) else {}
-        external_subscription=payment.get('subscription') or subscription.get('id')
-        external_reference=payment.get('externalReference') or data.get('externalReference')
+        pedido_checkout=None
+        if external_reference or checkout_id or external_subscription:
+            pedido_checkout=conn.execute('''
+                SELECT * FROM checkout_assinaturas
+                WHERE (? IS NOT NULL AND external_reference=?)
+                   OR (? IS NOT NULL AND checkout_id=?)
+                   OR (? IS NOT NULL AND asaas_subscription_id=?)
+                ORDER BY id DESC LIMIT 1
+            ''',(str(external_reference) if external_reference else None,str(external_reference) if external_reference else None,
+                 str(checkout_id) if checkout_id else None,str(checkout_id) if checkout_id else None,
+                 str(external_subscription) if external_subscription else None,str(external_subscription) if external_subscription else None)).fetchone()
 
-        assinatura=None
-        if external_subscription:
-            assinatura=conn.execute('SELECT * FROM assinaturas WHERE assinatura_externa=? ORDER BY id DESC LIMIT 1',(str(external_subscription),)).fetchone()
-        if not assinatura and external_reference:
-            text_ref=str(external_reference)
-            if text_ref.startswith('hotel:'):
-                try: hotel_id=int(text_ref.split(':')[1])
-                except (TypeError,ValueError): hotel_id=None
-            if hotel_id:
-                assinatura=conn.execute('SELECT * FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(hotel_id,)).fetchone()
-
-        if assinatura:
-            hotel_id=assinatura['hotel_id']
-
+        hotel_id=pedido_checkout['hotel_id'] if pedido_checkout else None
         conn.execute('INSERT INTO webhook_eventos (provider,event_id,event_type,hotel_id,payload,recebido_em,status) VALUES (?,?,?,?,?,?,?)',
                      ('asaas',event_id,event_type,hotel_id,payload,now,'RECEBIDO'))
 
-        if assinatura:
+        if not pedido_checkout:
+            status_evento='SEM_VINCULO'
+        else:
+            local_id=pedido_checkout['id']
             if external_subscription:
-                conn.execute('UPDATE assinaturas SET assinatura_externa=?,atualizado_em=? WHERE id=?',(str(external_subscription),now,assinatura['id']))
+                conn.execute('UPDATE checkout_assinaturas SET asaas_subscription_id=?,atualizado_em=? WHERE id=?',
+                             (str(external_subscription),now,local_id))
 
-            ativadores={'PAYMENT_CONFIRMED','PAYMENT_RECEIVED','PAYMENT_APPROVED','CHECKOUT_PAID'}
-            suspensores={'PAYMENT_OVERDUE','PAYMENT_DELETED','PAYMENT_REFUNDED'}
-            canceladores={'SUBSCRIPTION_INACTIVATED','SUBSCRIPTION_DELETED','SUBSCRIPTION_CANCELED'}
-            if event_type in ativadores:
-                plano=conn.execute('SELECT dias_ciclo FROM planos WHERE id=?',(assinatura['plano_id'],)).fetchone()
-                dias=int(plano['dias_ciclo'] if plano else 30)
-                fim=datetime.date.today()+datetime.timedelta(days=dias)
-                conn.execute('UPDATE assinaturas SET status=?,inicio=?,periodo_fim=?,trial_ate=NULL,atualizado_em=? WHERE id=?',
-                             ('ATIVA',datetime.date.today().isoformat(),fim.isoformat(),now,assinatura['id']))
+            if event_type in ('CHECKOUT_CANCELED','CHECKOUT_EXPIRED'):
+                status_evento='CANCELADO' if event_type=='CHECKOUT_CANCELED' else 'EXPIRADO'
+                conn.execute('UPDATE checkout_assinaturas SET status=?,atualizado_em=? WHERE id=?',(status_evento,now,local_id))
+            elif event_type in ('SUBSCRIPTION_INACTIVATED','SUBSCRIPTION_DELETED'):
+                subscription_id=str(external_subscription or pedido_checkout['asaas_subscription_id'] or '')
+                if subscription_id:
+                    conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE hotel_id=? AND assinatura_externa=?',
+                                 ('CANCELADA',now,hotel_id,subscription_id))
+                conn.execute('UPDATE checkout_assinaturas SET status=?,atualizado_em=? WHERE id=?',('CANCELADA',now,local_id))
                 status_evento='PROCESSADO'
-            elif event_type in suspensores:
-                conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE id=?',('SUSPENSA',now,assinatura['id']))
+            elif event_type in ('PAYMENT_OVERDUE','PAYMENT_DELETED','PAYMENT_REFUNDED'):
+                subscription_id=str(external_subscription or pedido_checkout['asaas_subscription_id'] or '')
+                if subscription_id:
+                    conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE hotel_id=? AND assinatura_externa=?',
+                                 ('SUSPENSA',now,hotel_id,subscription_id))
+                conn.execute('UPDATE checkout_assinaturas SET status=?,atualizado_em=? WHERE id=?',('SUSPENSA',now,local_id))
                 status_evento='PROCESSADO'
-            elif event_type in canceladores:
-                conn.execute('UPDATE assinaturas SET status=?,atualizado_em=? WHERE id=?',('CANCELADA',now,assinatura['id']))
-                status_evento='PROCESSADO'
+            elif event_type in ('CHECKOUT_PAID','PAYMENT_CONFIRMED','PAYMENT_RECEIVED'):
+                plano=conn.execute('SELECT id,dias_ciclo,preco_mensal FROM planos WHERE id=? AND ativo=1',(pedido_checkout['plano_id'],)).fetchone()
+                payment_id=str(payment.get('id') or '').strip()
+                if event_type=='CHECKOUT_PAID' and not payment_id:
+                    payment_id='checkout:'+str(checkout_id or pedido_checkout['checkout_id'] or local_id)
+                if not plano or not payment_id:
+                    status_evento='REVISAR'
+                else:
+                    valor=payment.get('value')
+                    if event_type=='CHECKOUT_PAID' and valor is None:
+                        try:
+                            itens=checkout.get('items') or []
+                            valor=sum(float(item.get('value') or 0)*float(item.get('quantity') or 0) for item in itens if isinstance(item,dict))
+                        except (TypeError,ValueError):
+                            valor=None
+                    try:
+                        valor_invalido=valor is not None and abs(float(valor)-float(plano['preco_mensal']))>0.01
+                    except (TypeError,ValueError):
+                        valor_invalido=True
+                    ja_processado=conn.execute('SELECT payment_id FROM asaas_pagamentos_processados WHERE payment_id=?',(payment_id,)).fetchone()
+                    pagamento_deste_checkout=conn.execute('SELECT payment_id FROM asaas_pagamentos_processados WHERE checkout_local_id=? LIMIT 1',(local_id,)).fetchone()
+                    data_criacao_pagamento=str(payment.get('dateCreated') or payment.get('confirmedDate') or payment.get('paymentDate') or '')[:10]
+                    data_checkout_pago=str(pedido_checkout['pago_em'] or '')[:10]
+                    primeiro_pagamento_ja_ativou=(event_type=='CHECKOUT_PAID' and bool(pagamento_deste_checkout)) or (
+                        event_type in ('PAYMENT_CONFIRMED','PAYMENT_RECEIVED') and pedido_checkout['status']=='ATIVA' and
+                        bool(data_criacao_pagamento and data_checkout_pago and data_criacao_pagamento<=data_checkout_pago))
+                    if valor_invalido:
+                        status_evento='VALOR_DIVERGENTE'
+                    elif ja_processado or primeiro_pagamento_ja_ativou:
+                        status_evento='PAGAMENTO_DUPLICADO'
+                    else:
+                        conn.execute('INSERT INTO asaas_pagamentos_processados (payment_id,checkout_local_id,processado_em) VALUES (?,?,?)',
+                                     (payment_id,local_id,now))
+                        atual=conn.execute('SELECT * FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(hotel_id,)).fetchone()
+                        if not atual:
+                            ensure_subscription_for_hotel(conn.cursor(),hotel_id)
+                            atual=conn.execute('SELECT * FROM assinaturas WHERE hotel_id=? ORDER BY id DESC LIMIT 1',(hotel_id,)).fetchone()
+                        hoje=saas_local_now().date()
+                        try:
+                            fim_atual=datetime.date.fromisoformat(str(atual['periodo_fim'])[:10]) if atual and atual['periodo_fim'] else hoje
+                        except ValueError:
+                            fim_atual=hoje
+                        base=fim_atual if atual and atual['status']=='ATIVA' and fim_atual>=hoje else hoje
+                        novo_fim=base+datetime.timedelta(days=int(plano['dias_ciclo'] or 30))
+                        conn.execute('''UPDATE assinaturas SET plano_id=?,status='ATIVA',inicio=?,periodo_fim=?,trial_ate=NULL,
+                                        gateway=?,checkout_externo=?,assinatura_externa=?,atualizado_em=? WHERE id=?''',
+                                     (pedido_checkout['plano_id'],(atual['inicio'] if atual and atual['status']=='ATIVA' else hoje.isoformat()),
+                                      novo_fim.isoformat(),'asaas:'+os.getenv('ASAAS_ENV','sandbox'),
+                                      str(pedido_checkout['checkout_id'] or checkout_id or ''),
+                                      str(external_subscription or pedido_checkout['asaas_subscription_id'] or '') or None,now,atual['id']))
+                        conn.execute('UPDATE checkout_assinaturas SET status=?,pago_em=?,atualizado_em=? WHERE id=?',
+                                     ('ATIVA',now,now,local_id))
+                        status_evento='PROCESSADO'
             elif event_type=='SUBSCRIPTION_CREATED':
                 status_evento='PROCESSADO'
             else:
                 status_evento='RECEBIDO'
-        else:
-            status_evento='SEM_VINCULO'
 
-        conn.execute('UPDATE webhook_eventos SET status=?,processado_em=? WHERE provider=? AND event_id=?',(status_evento,now,'asaas',event_id))
+        conn.execute('UPDATE webhook_eventos SET status=?,processado_em=? WHERE provider=? AND event_id=?',
+                     (status_evento,now,'asaas',event_id))
         conn.commit()
         return jsonify({'ok':True,'status':status_evento,'event_id':event_id}),200
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        try:
-            conn.execute('UPDATE webhook_eventos SET status=?,erro=? WHERE provider=? AND event_id=?',('ERRO',str(e)[:500],'asaas',event_id)); conn.commit()
-        except Exception: pass
+        app.logger.exception('Falha ao processar webhook Asaas, evento %s',event_id)
         return jsonify({'erro':'Evento recebido, mas houve falha no processamento.'}),500
     finally:
         conn.close()
@@ -2033,43 +2532,164 @@ def platform_hoteis(current_user,role):
         return jsonify(out),200
     finally: conn.close()
 
+@app.route('/api/platform/metricas')
+@token_required
+def platform_metricas(current_user,role):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    conn=get_db()
+    try:
+        hoje=saas_local_now().date(); inicio_mes=hoje.replace(day=1); inicio_30=hoje-datetime.timedelta(days=29)
+        hotels=conn.execute('SELECT id,nome,data_cadastro,bloqueado FROM hoteis').fetchall()
+        mrr=0.0; ativas=teste=canceladas=onboardings=inadimplentes=sem_setup=0; quartos_total=reservas_mes=checkins_hoje=checkouts_hoje=0
+        for h in hotels:
+            hid=h['id']; sub=get_subscription(conn,hid)
+            if sub:
+                if sub['status']=='ATIVA' and sub.get('ativo'):
+                    ativas+=1; mrr+=float(sub.get('preco_mensal') or 0)
+                elif sub['status']=='TESTE' and sub.get('ativo'): teste+=1
+                elif sub['status']=='CANCELADA' and str(sub.get('atualizado_em') or '')[:10]>=inicio_30.isoformat(): canceladas+=1
+                if sub['status']=='ATIVA' and not sub.get('ativo'): inadimplentes+=1
+            inicio=str(h['data_cadastro'] or '')[:10]
+            try:
+                if inicio and datetime.date.fromisoformat(inicio)>=inicio_30: onboardings+=1
+            except ValueError: pass
+            qtd_quartos=int(conn.execute('SELECT COUNT(*) AS n FROM quartos WHERE hotel_id=?',(hid,)).fetchone()['n'] or 0)
+            quartos_total+=qtd_quartos
+            if qtd_quartos==0: sem_setup+=1
+            reservas_mes+=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in>=? AND check_in<=?",(hid,inicio_mes.isoformat(),hoje.isoformat())).fetchone()['n'] or 0)
+            checkins_hoje+=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_in=?",(hid,hoje.isoformat())).fetchone()['n'] or 0)
+            checkouts_hoje+=int(conn.execute("SELECT COUNT(*) AS n FROM reservas WHERE hotel_id=? AND status<>'CANCELADA' AND check_out=?",(hid,hoje.isoformat())).fetchone()['n'] or 0)
+        db_start=time.monotonic()
+        conn.execute('SELECT 1').fetchone()
+        db_ms=round((time.monotonic()-db_start)*1000,2)
+        falhas_webhook=int(conn.execute("SELECT COUNT(*) AS n FROM webhook_eventos WHERE status='ERRO' AND recebido_em>=?",(inicio_30.isoformat(),)).fetchone()['n'] or 0)
+        tickets_abertos=int(conn.execute("SELECT COUNT(*) AS n FROM suporte_tickets WHERE status<>'RESOLVIDO'").fetchone()['n'] or 0)
+        tempos=[]
+        for t in conn.execute('SELECT criado_em,primeira_resposta_em FROM suporte_tickets WHERE primeira_resposta_em IS NOT NULL').fetchall():
+            try:
+                a=datetime.datetime.fromisoformat(t['criado_em']); b=datetime.datetime.fromisoformat(t['primeira_resposta_em']); tempos.append(max(0.0,(b-a).total_seconds()/3600))
+            except (TypeError,ValueError): pass
+        sla_medio=sum(tempos)/len(tempos) if tempos else None
+        uso_modulos=[dict(x) for x in conn.execute('SELECT module,COUNT(*) AS acessos FROM saas_module_usage WHERE accessed_at>=? GROUP BY module ORDER BY acessos DESC',(inicio_30.isoformat(),)).fetchall()]
+        cac_raw=os.getenv('SAAS_CAC_ESTIMADO','').strip()
+        try: cac=float(cac_raw) if cac_raw else None
+        except ValueError: cac=None
+        arpa=mrr/ativas if ativas else 0
+        churn=canceladas/max(ativas+canceladas,1) if canceladas else 0
+        ltv=(arpa/churn) if churn>0 else None
+        return jsonify({'data':hoje.isoformat(),'clientes':len(hotels),'assinaturas_ativas':ativas,'em_teste':teste,
+            'inadimplentes':inadimplentes,'canceladas':canceladas,'onboardings_30d':onboardings,'onboarding_sem_quartos':sem_setup,'mrr':round(mrr,2),'arr':round(mrr*12,2),
+            'churn_estimado_30d_percentual':round(churn*100,2),'ltv_estimado':round(ltv,2) if ltv is not None else None,
+            'cac':cac,'ltv_cac':round(ltv/cac,2) if ltv is not None and cac and cac>0 else None,
+            'quartos_cadastrados':quartos_total,'reservas_mes':reservas_mes,'checkins_hoje':checkins_hoje,'checkouts_hoje':checkouts_hoje,
+            'webhooks_com_erro_30d':falhas_webhook,'tickets_abertos':tickets_abertos,'sla_media_primeira_resposta_horas':round(sla_medio,2) if sla_medio is not None else None,'uso_modulos_30d':uso_modulos,'infra':{'banco':'PostgreSQL' if getattr(conn,'is_postgres',False) else 'SQLite','banco_responde':True,'latencia_ms':db_ms},
+            'integracoes':{'asaas_configurado':bool(os.getenv('ASAAS_API_KEY','').strip() and os.getenv('ASAAS_WEBHOOK_TOKEN','').strip() and os.getenv('SAAS_PUBLIC_URL','').strip()),
+            'geoapify_configurado':bool(os.getenv('GEOAPIFY_API_KEY','').strip()),
+            'geoapify_maps_configurado':bool(os.getenv('GEOAPIFY_MAPS_API_KEY','').strip()),
+                'whatsapp_configurado':bool(os.getenv('WHATSAPP_CLOUD_API_ACCESS_TOKEN','').strip() and os.getenv('WHATSAPP_CLOUD_API_PHONE_NUMBER_ID','').strip()),
+                'booking_api':'requer credenciais e aprovação de parceiro','airbnb_api':'requer credenciais de parceiro','expedia_api':'requer credenciais de parceiro'}}),200
+    finally: conn.close()
+
+@app.route('/api/telemetria/modulo',methods=['POST'])
+@token_required
+def registrar_uso_modulo(current_user,role):
+    permitidos={'painel','quartos','categorias','reservas','servicos','ordens','equipe','estoque','financeiro','relatorios','integracoes','whatsapp','suporte'}
+    if not g.hotel_id: return jsonify({'ok':True}),200
+    data=request.get_json(silent=True) or {}; modulo=str(data.get('module') or '')
+    if modulo not in permitidos: return jsonify({'erro':'Módulo inválido.'}),400
+    conn=get_db()
+    try:
+        conn.execute('INSERT INTO saas_module_usage (hotel_id,module,accessed_at) VALUES (?,?,?)',(g.hotel_id,modulo,utc_now_iso()))
+        conn.commit(); return jsonify({'ok':True}),201
+    finally: conn.close()
+
+@app.route('/api/suporte/tickets',methods=['GET','POST'])
+@token_required
+def suporte_tickets(current_user,role):
+    if not g.hotel_id: return jsonify({'erro':'Este perfil não pertence a um hotel.'}),403
+    conn=get_db()
+    try:
+        if request.method=='POST':
+            data=request.get_json(silent=True) or {}; assunto=str(data.get('assunto') or '').strip()[:160]; mensagem=str(data.get('mensagem') or '').strip()[:5000]
+            ticket_id=data.get('ticket_id')
+            if len(mensagem)<8: return jsonify({'erro':'A mensagem precisa ter pelo menos 8 caracteres.'}),400
+            if ticket_id:
+                try: ticket_id=int(ticket_id)
+                except (TypeError,ValueError): return jsonify({'erro':'Chamado inválido.'}),400
+                ticket=conn.execute("SELECT id,status FROM suporte_tickets WHERE id=? AND hotel_id=?",(ticket_id,g.hotel_id)).fetchone()
+                if not ticket: return jsonify({'erro':'Chamado não encontrado.'}),404
+                if ticket['status']=='RESOLVIDO': return jsonify({'erro':'O chamado está resolvido. Abra outro para um novo assunto.'}),409
+                now=utc_now_iso(); conn.execute('INSERT INTO suporte_mensagens (ticket_id,autor_id,autor_role,mensagem,criado_em) VALUES (?,?,?,?,?)',(ticket_id,g.current_user_id,role,mensagem,now)); conn.execute("UPDATE suporte_tickets SET atualizado_em=?,status='ABERTO' WHERE id=?",(now,ticket_id)); conn.commit()
+                return jsonify({'mensagem':'Resposta adicionada.','id':ticket_id}),200
+            if len(assunto)<4: return jsonify({'erro':'Informe um assunto com pelo menos 4 caracteres.'}),400
+            now=utc_now_iso(); cur=conn.cursor(); cur.execute("INSERT INTO suporte_tickets (hotel_id,assunto,prioridade,status,criado_por,criado_em,atualizado_em) VALUES (?,?,?,'ABERTO',?,?,?)",(g.hotel_id,assunto,str(data.get('prioridade') or 'NORMAL').upper() if str(data.get('prioridade') or 'NORMAL').upper() in ('BAIXA','NORMAL','ALTA') else 'NORMAL',g.current_user_id,now,now)); ticket_id=cur.lastrowid
+            conn.execute('INSERT INTO suporte_mensagens (ticket_id,autor_id,autor_role,mensagem,criado_em) VALUES (?,?,?,?,?)',(ticket_id,g.current_user_id,role,mensagem,now)); conn.commit()
+            return jsonify({'mensagem':'Chamado aberto.','id':ticket_id}),201
+        rows=conn.execute('SELECT id,assunto,prioridade,status,criado_em,atualizado_em,primeira_resposta_em FROM suporte_tickets WHERE hotel_id=? ORDER BY atualizado_em DESC',(g.hotel_id,)).fetchall(); out=[]
+        for row in rows:
+            ticket=dict(row); ticket['mensagens']=[dict(x) for x in conn.execute('SELECT autor_role,mensagem,criado_em FROM suporte_mensagens WHERE ticket_id=? ORDER BY id',(row['id'],)).fetchall()]; out.append(ticket)
+        return jsonify(out),200
+    finally: conn.close()
+
+@app.route('/api/platform/tickets',methods=['GET'])
+@token_required
+def platform_listar_tickets(current_user,role):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    conn=get_db()
+    try:
+        rows=conn.execute("SELECT t.*,h.nome AS hotel_nome FROM suporte_tickets t JOIN hoteis h ON h.id=t.hotel_id ORDER BY CASE WHEN t.status='RESOLVIDO' THEN 1 ELSE 0 END,t.atualizado_em").fetchall(); out=[]
+        for row in rows:
+            ticket=dict(row); ticket['mensagens']=[dict(x) for x in conn.execute('SELECT autor_role,mensagem,criado_em FROM suporte_mensagens WHERE ticket_id=? ORDER BY id',(row['id'],)).fetchall()]; out.append(ticket)
+        return jsonify(out),200
+    finally: conn.close()
+
+@app.route('/api/platform/tickets/<int:ticket_id>',methods=['PUT'])
+@token_required
+def platform_responder_ticket(current_user,role,ticket_id):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    data=request.get_json(silent=True) or {}; resposta=str(data.get('resposta') or '').strip()[:5000]; status=str(data.get('status') or 'EM_ATENDIMENTO').upper()
+    if status not in ('ABERTO','EM_ATENDIMENTO','AGUARDANDO_CLIENTE','RESOLVIDO'): return jsonify({'erro':'Status de chamado inválido.'}),400
+    conn=get_db()
+    try:
+        ticket=conn.execute('SELECT id FROM suporte_tickets WHERE id=?',(ticket_id,)).fetchone()
+        if not ticket: return jsonify({'erro':'Chamado não encontrado.'}),404
+        now=utc_now_iso(); conn.execute('UPDATE suporte_tickets SET status=?,atualizado_em=?,primeira_resposta_em=COALESCE(primeira_resposta_em,?) WHERE id=?',(status,now,now if resposta else None,ticket_id))
+        if resposta: conn.execute('INSERT INTO suporte_mensagens (ticket_id,autor_id,autor_role,mensagem,criado_em) VALUES (?,?,?,?,?)',(ticket_id,g.current_user_id,'platform_admin',resposta,now))
+        conn.commit(); return jsonify({'mensagem':'Chamado atualizado.'}),200
+    finally: conn.close()
+
 @app.route('/api/platform/usuarios')
 @token_required
 def platform_usuarios(current_user,role):
-    if role!='platform_admin':
-        return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
     conn=get_db()
     try:
         rows=conn.execute('''
-            SELECT u.id,u.username,u.nome,u.email,u.role,u.ativo,u.ultimo_login,
-                   h.id AS hotel_id,h.nome AS hotel_nome,h.bloqueado AS hotel_bloqueado
-            FROM usuarios u
-            LEFT JOIN hoteis h ON h.id=u.hotel_id
-            ORDER BY u.ativo DESC, u.role, h.nome, u.nome, u.username
+            SELECT u.id,u.nome,u.username,u.email,u.role,u.ativo,u.ultimo_login,
+                   h.id AS hotel_id,h.nome AS hotel_nome
+            FROM usuarios u LEFT JOIN hoteis h ON h.id=u.hotel_id
+            WHERE u.role<>'platform_admin'
+            ORDER BY h.nome,u.nome,u.username
         ''').fetchall()
-        return jsonify([dict(r) for r in rows]),200
-    finally:
-        conn.close()
+        return jsonify([dict(row) for row in rows]),200
+    finally: conn.close()
 
 @app.route('/api/platform/usuarios/<int:user_id>/status',methods=['PUT'])
 @token_required
-def platform_atualizar_usuario_status(current_user,role,user_id):
-    if role!='platform_admin':
-        return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
+def platform_atualizar_usuario(current_user,role,user_id):
+    if role!='platform_admin': return jsonify({'erro':'Acesso restrito ao administrador do SaaS.'}),403
     data=request.get_json(silent=True) or {}
-    ativo=bool(data.get('ativo',True))
+    ativo=data.get('ativo')
+    if not isinstance(ativo,bool): return jsonify({'erro':'Informe ativo como true ou false.'}),400
     conn=get_db()
     try:
-        user=conn.execute('SELECT id,username,role,hotel_id FROM usuarios WHERE id=? LIMIT 1',(user_id,)).fetchone()
-        if not user:
-            return jsonify({'erro':'Usuário não encontrado.'}),404
-        if user['role']=='platform_admin':
-            return jsonify({'erro':'O administrador do SaaS não pode ser bloqueado por esta tela.'}),400
+        target=conn.execute('SELECT id,role FROM usuarios WHERE id=?',(user_id,)).fetchone()
+        if not target: return jsonify({'erro':'Usuário não encontrado.'}),404
+        if target['role']=='platform_admin': return jsonify({'erro':'Contas de administrador SaaS não podem ser suspensas por esta tela.'}),403
         conn.execute('UPDATE usuarios SET ativo=? WHERE id=?',(1 if ativo else 0,user_id))
         conn.commit()
-        return jsonify({'mensagem':'Usuário ativado.' if ativo else 'Usuário suspenso.','usuario_id':user_id,'ativo':ativo}),200
-    finally:
-        conn.close()
+        return jsonify({'mensagem':'Acesso reativado.' if ativo else 'Acesso suspenso.','usuario_id':user_id,'ativo':ativo}),200
+    finally: conn.close()
 
 @app.route('/api/platform/hoteis/<int:hotel_id>/bloqueio',methods=['PUT'])
 @token_required
@@ -2082,7 +2702,7 @@ def platform_bloquear_hotel(current_user,role,hotel_id):
         h=conn.execute('SELECT id,nome FROM hoteis WHERE id=?',(hotel_id,)).fetchone()
         if not h: return jsonify({'erro':'Hotel não encontrado.'}),404
         conn.execute('UPDATE hoteis SET bloqueado=?,bloqueado_em=?,bloqueio_motivo=? WHERE id=?',
-                     (1 if bloquear else 0,datetime.datetime.utcnow().isoformat() if bloquear else None,motivo if bloquear else None,hotel_id))
+                     (1 if bloquear else 0,utc_now_iso() if bloquear else None,motivo if bloquear else None,hotel_id))
         conn.commit()
         return jsonify({'mensagem':'Hotel bloqueado.' if bloquear else 'Hotel liberado.','hotel_id':hotel_id}),200
     finally: conn.close()
@@ -2102,10 +2722,10 @@ def platform_atualizar_assinatura(current_user,role,hotel_id):
         if not conn.execute('SELECT id FROM hoteis WHERE id=?',(hotel_id,)).fetchone(): return jsonify({'erro':'Hotel não encontrado.'}),404
         plano=conn.execute('SELECT id FROM planos WHERE id=? AND ativo=1',(plano_id,)).fetchone()
         if not plano: return jsonify({'erro':'Plano não encontrado.'}),404
-        hoje=datetime.date.today(); fim=hoje+datetime.timedelta(days=dias)
+        hoje=saas_local_now().date(); fim=hoje+datetime.timedelta(days=dias)
         cur=conn.cursor()
         cur.execute('INSERT INTO assinaturas (hotel_id,plano_id,status,inicio,periodo_fim,trial_ate,gateway,atualizado_em) VALUES (?,?,?,?,?,?,?,?)',
-                    (hotel_id,plano_id,status,hoje.isoformat(),fim.isoformat() if status!='CANCELADA' else None,fim.isoformat() if status=='TESTE' else None,'plataforma',datetime.datetime.utcnow().isoformat()))
+                    (hotel_id,plano_id,status,hoje.isoformat(),fim.isoformat() if status!='CANCELADA' else None,fim.isoformat() if status=='TESTE' else None,'plataforma',utc_now_iso()))
         conn.commit()
         return jsonify({'mensagem':'Assinatura atualizada.','hotel_id':hotel_id}),200
     finally: conn.close()
@@ -2208,6 +2828,26 @@ REGISTER_TEMPLATE = """
       </div>
       <button type="button" class="btn btn-outline-primary btn-sm" onclick="adicionarLinha()">+ Adicionar outro tipo de quarto</button>
 
+      <div class="section-title">Faixas etárias para reservas</div>
+      <p class="help">Defina faixas que cubram dos 0 aos 120 anos. Na reserva, você informa quantas pessoas há em cada faixa; o sistema calcula os adicionais por diária.</p>
+      <div id="container-faixas-registro">
+        <div class="row g-2 mb-2 linha-faixa-registro align-items-end">
+          <div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" value="Criança" maxlength="100" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" value="0" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" value="11" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div>
+          <div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>
+        </div>
+        <div class="row g-2 mb-2 linha-faixa-registro align-items-end">
+          <div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" value="Adulto" maxlength="100" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" value="12" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" value="120" min="0" max="120" required></div>
+          <div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div>
+          <div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm" onclick="adicionarFaixaRegistro()">+ Adicionar faixa etária</button>
+
       <div class="section-title">Serviços extras</div>
       <div class="row g-3">
         <div class="col-md-6">
@@ -2226,21 +2866,8 @@ REGISTER_TEMPLATE = """
         </div>
       </div>
 
-      <div class="section-title">Google Maps</div>
-      <div class="row g-3">
-        <div class="col-md-6">
-          <label class="form-label">API do Google Maps</label>
-          <select name="maps_api_status" id="maps_api_status" class="form-select" onchange="alternarMapsKey()">
-            <option value="nao_tenho" selected>Não tenho API do Google Maps</option>
-            <option value="tenho">Tenho API do Google Maps</option>
-          </select>
-        </div>
-        <div class="col-md-6 api-key-wrap" id="maps-key-wrap">
-          <label class="form-label">Chave da API do Google Maps</label>
-          <input type="password" name="maps_api_key" id="maps_api_key" class="form-control" maxlength="300" autocomplete="new-password">
-          <div class="help mt-1">Você também poderá configurar a integração depois no sistema.</div>
-        </div>
-      </div>
+      <div class="section-title">Localização</div>
+      <p class="help">Configure a pesquisa de endereço e o mapa depois do cadastro, na aba Integrações. As chaves Geoapify são configuradas pelo administrador no ambiente do servidor.</p>
 
       <button type="submit" class="btn btn-primary w-100 mt-4 py-2">Cadastrar Hotel</button>
       <a href="/login" class="btn btn-outline-secondary w-100 mt-2">Voltar para o Login</a>
@@ -2260,13 +2887,16 @@ function removerLinha(botao){
   if(linhas.length>1)botao.closest('.linha-quarto').remove();
   else alert('Deve manter pelo menos um tipo de quarto configurado.');
 }
-function alternarMapsKey(){
-  const ativo=document.getElementById('maps_api_status').value==='tenho';
-  document.getElementById('maps-key-wrap').classList.toggle('show',ativo);
-  document.getElementById('maps_api_key').required=ativo;
-  if(!ativo)document.getElementById('maps_api_key').value='';
+function adicionarFaixaRegistro(){
+  const linha=document.createElement('div');linha.className='row g-2 mb-2 linha-faixa-registro align-items-end';
+  linha.innerHTML='<div class="col-md-3"><label class="form-label small">Categoria</label><input name="faixa_nome[]" class="form-control" maxlength="100" placeholder="Ex.: Adolescente" required></div><div class="col-md-2"><label class="form-label small">Idade mínima</label><input name="faixa_min[]" type="number" class="form-control" min="0" max="120" required></div><div class="col-md-2"><label class="form-label small">Idade máxima</label><input name="faixa_max[]" type="number" class="form-control" min="0" max="120" required></div><div class="col-md-2"><label class="form-label small">Adicional/dia (R$)</label><input name="faixa_adicional[]" type="number" class="form-control" value="0" min="0" step="0.01" required></div><div class="col-md-3"><button type="button" class="btn btn-outline-danger w-100" onclick="removerFaixaRegistro(this)">Remover</button></div>';
+  document.getElementById('container-faixas-registro').appendChild(linha);
 }
-alternarMapsKey();
+function removerFaixaRegistro(botao){
+  const linhas=document.querySelectorAll('.linha-faixa-registro');
+  if(linhas.length>1)botao.closest('.linha-faixa-registro').remove();
+  else alert('Mantenha pelo menos uma faixa etária.');
+}
 </script>
 </body>
 </html>
@@ -2357,6 +2987,7 @@ button{cursor:pointer}
 .topbar-actions{display:flex;align-items:center;gap:8px}
 .content{padding:24px;max-width:1600px;width:100%;margin:0 auto}
 .tab{display:none}.tab.active{display:block}
+#painel-hospedes-reserva{display:none}#tab-reservas #painel-hospedes-reserva{display:block}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 .card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
 .card-title{font-size:16px;font-weight:730;margin:0}
@@ -2401,6 +3032,7 @@ tr:last-child td{border-bottom:0}
 .kv{display:grid;grid-template-columns:190px 1fr;gap:8px;font-size:12px}
 .kv div:nth-child(odd){color:var(--muted)}
 .inline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.report-chart{min-height:230px;display:flex;align-items:center;justify-content:center;overflow:auto}.report-chart svg{width:100%;min-width:420px;height:auto}.origin-layout{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap}.donut{width:180px;height:180px;border-radius:50%;display:grid;place-items:center}.donut>div{width:105px;height:105px;background:#fff;border-radius:50%;display:grid;place-content:center;text-align:center;font-size:22px;font-weight:750}.donut small{font-size:10px;font-weight:500;color:var(--muted)}.legend{display:grid;gap:8px;font-size:12px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px}.forecast-list{display:grid;gap:11px}.forecast-row{display:grid;grid-template-columns:76px 1fr 42px 88px;gap:9px;align-items:center;font-size:11px}.forecast-bar{height:9px;background:#edf1f5;border-radius:99px;overflow:hidden}.forecast-bar i{height:100%;display:block;background:var(--primary);border-radius:99px}.forecast-row small{color:var(--muted)}
 .platform-status{padding:4px 8px;border-radius:999px;font-size:10px;font-weight:700}
 .platform-open{background:#e8f5ed;color:#16643f}.platform-blocked{background:#fdecea;color:#9f2419}
 .toast-host{position:fixed;right:20px;bottom:20px;z-index:9999;display:grid;gap:8px;max-width:380px}
@@ -2424,13 +3056,15 @@ tr:last-child td{border-bottom:0}
       <span class="brand-subtitle">Gestão hoteleira profissional</span>
     </div>
     <div class="user-panel">
-      <div class="user-name" id="user-name">Usuário</div>
-      <div class="user-role" id="user-role">Perfil</div>
-      <div class="hotel-name" id="hotel-name">Hotel</div>
+      <div class="user-name" id="user-name">{{ contexto_usuario.nome|e }}</div>
+      <div class="user-role" id="user-role">{{ contexto_usuario.role_label|e }}</div>
+      <div class="hotel-name" id="hotel-name">{{ contexto_usuario.hotel_nome|default('Administração SaaS', true)|e }}</div>
     </div>
     <div class="nav-area">
       <div class="nav-group-title">Navegação</div>
-      <div id="nav"></div>
+      <div id="nav">
+        {% for item in menu_inicial %}<button type="button" class="nav-btn{% if item.id == 'painel' or item.id == 'plataforma' %} active{% endif %}" data-tab="{{ item.id|e }}"><span class="nav-code">{{ item.icone|e }}</span><span>{{ item.nome|e }}</span></button>{% endfor %}
+      </div>
     </div>
     <div class="sidebar-footer">
       <button type="button" class="btn-outline-light" id="btn-back-side">Voltar</button>
@@ -2452,7 +3086,7 @@ tr:last-child td{border-bottom:0}
     </header>
 
     <section class="content">
-      <div id="tab-painel" class="tab active"></div>
+      <div id="tab-painel" class="tab active"><div class="notice info">O painel está inicializando. Se esta mensagem permanecer, o navegador não carregou a versão atualizada do sistema.</div></div>
 
       <div id="tab-quartos" class="tab">
         <div class="card">
@@ -2484,7 +3118,7 @@ tr:last-child td{border-bottom:0}
         </div>
       </div>
 
-      <div id="tab-hospedes" class="tab">
+      <div id="painel-hospedes-reserva">
         <div class="card">
           <div class="card-header"><div><h2 class="card-title" id="hospede-form-title">Novo hóspede</h2><p class="card-help">Mantenha os dados do cliente atualizados para reservas e pedidos.</p></div></div>
           <form id="form-hospede" class="form-grid">
@@ -2523,17 +3157,25 @@ tr:last-child td{border-bottom:0}
           <div class="card-header"><div><h2 class="card-title" id="reserva-form-title">Nova reserva</h2><p class="card-help">O sistema impede conflito de datas e registra pagamento separadamente da receita.</p></div></div>
           <form id="form-reserva" class="form-grid">
             <input type="hidden" id="r-edit-id">
-            <div class="field span-6"><label>Hóspede</label><select id="r-hospede-id" required></select></div>
+            <div class="field span-6"><label>Hóspede existente</label><select id="r-hospede-id" required></select><button class="btn btn-secondary" type="button" style="margin-top:8px" onclick="alternarNovoHospedeReserva()">+ Cadastrar hóspede nesta reserva</button></div>
+            <div id="r-novo-hospede" class="inline-grid hidden span-12">
+              <div class="field span-6"><label>Nome completo</label><input id="r-novo-nome" maxlength="180"></div>
+              <div class="field"><label>Documento</label><input id="r-novo-doc" maxlength="40"></div>
+              <div class="field"><label>Telefone</label><input id="r-novo-tel" maxlength="30"></div>
+              <div class="field"><label>E-mail</label><input id="r-novo-email" type="email" maxlength="160"></div>
+            </div>
             <div class="field"><label>Quarto</label><select id="r-quarto-num" required></select></div>
             <div class="field"><label>Check-in</label><input id="r-checkin" type="date" required></div>
             <div class="field"><label>Check-out</label><input id="r-checkout" type="date" required></div>
+            <div class="field"><label>Origem da reserva</label><select id="r-canal"><option>Direto</option><option>WhatsApp</option><option>Balcão</option><option>Booking.com</option><option>Expedia</option><option>Airbnb</option><option>Outro</option></select></div>
             <div class="field span-12"><label>Composição de pessoas</label><div id="container-faixas-reserva" class="inline-grid"></div></div>
+            <div class="field span-12"><label>Pedidos e anotações do hóspede</label><textarea id="r-observacoes" maxlength="2000" placeholder="Ex.: berço no quarto, chegada após as 22h, preferência por quarto silencioso"></textarea></div>
             <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="r-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="r-submit">Criar reserva</button></div>
           </form>
         </div>
         <div class="card">
           <div class="card-header"><div><h2 class="card-title">Reservas</h2><p class="card-help">Use "Pagou" somente quando a entrada tiver sido efetivamente recebida.</p></div></div>
-          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Hóspede</th><th>Quarto</th><th>Período</th><th>Diárias</th><th>Total</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-reservas"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>ID / origem</th><th>Hóspede</th><th>Quarto</th><th>Período</th><th>Diárias</th><th>Total</th><th>Pagamento</th><th>Pedidos/anotações</th><th>Movimentação</th><th>Ações</th></tr></thead><tbody id="tabela-reservas"></tbody></table></div>
         </div>
       </div>
 
@@ -2586,7 +3228,7 @@ tr:last-child td{border-bottom:0}
             <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="os-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="os-submit">Criar OS</button></div>
           </form>
         </div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>ID</th><th>Quarto</th><th>Hóspede</th><th>Tipo</th><th>Prioridade</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-os"></tbody></table></div></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>OS</th><th>Quarto / andar</th><th>Hóspede</th><th>Serviço e descrição</th><th>Prioridade</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-os"></tbody></table></div></div>
       </div>
 
       <div id="tab-equipe" class="tab">
@@ -2598,12 +3240,14 @@ tr:last-child td{border-bottom:0}
             <div class="field"><label>Usuário</label><input id="u-username" required maxlength="80"></div>
             <div class="field"><label>Perfil</label><select id="u-role"><option value="recepcao">Recepção</option><option value="gerente">Gerente</option><option value="limpeza">Limpeza</option><option value="manutencao">Manutenção</option><option value="financeiro">Financeiro</option></select></div>
             <div class="field"><label>E-mail</label><input id="u-email" type="email" maxlength="160"></div>
+            <div class="field"><label>WhatsApp do funcionário</label><input id="u-telefone" type="tel" maxlength="40" placeholder="55 + DDD + número"></div>
+            <div class="field span-6"><label><input id="u-whatsapp-optin" type="checkbox"> Autoriza receber novas ordens por WhatsApp</label></div>
             <div class="field span-6"><label>Senha <span class="small">mínimo de 10 caracteres, maiúscula, minúscula e número</span></label><input id="u-password" type="password" maxlength="160"></div>
             <div class="field"><label>Status</label><select id="u-ativo"><option value="1">Ativo</option><option value="0">Bloqueado</option></select></div>
             <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="u-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="u-submit">Criar acesso</button></div>
           </form>
         </div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-equipe"></tbody></table></div></div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>WhatsApp</th><th>Último login</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-equipe"></tbody></table></div></div>
       </div>
 
       <div id="tab-estoque" class="tab">
@@ -2637,25 +3281,43 @@ tr:last-child td{border-bottom:0}
       </div>
 
       <div id="tab-relatorios" class="tab">
-        <div class="card"><div class="card-header"><div><h2 class="card-title">Relatórios gerenciais</h2><p class="card-help">Indicadores calculados sobre receitas efetivamente pagas.</p></div><button class="btn btn-secondary" type="button" onclick="carregarRelatorios()">Atualizar</button></div><div class="metrics" id="relatorio-metricas"></div></div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Relatórios gerenciais</h2><p class="card-help">A ocupação e as receitas geradas consideram as datas de hospedagem; caixa considera os valores recebidos no período.</p></div></div>
+          <div class="toolbar"><div class="field"><label>Período</label><select id="rel-periodo"><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="mes">Mês atual</option><option value="personalizado">Personalizado</option></select></div><div id="rel-datas-personalizadas" class="inline-grid hidden"><div class="field"><label>De</label><input id="rel-inicio" type="date"></div><div class="field"><label>Até</label><input id="rel-fim" type="date"></div></div><button class="btn btn-primary" type="button" onclick="carregarRelatorios()">Aplicar período</button><button class="btn btn-secondary" type="button" onclick="carregarRelatorios()">Atualizar</button></div>
+          <div class="metrics" id="relatorio-metricas"></div>
+        </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Movimentação de hoje</h2><p class="card-help">Entradas e saídas previstas e realizadas, além dos hóspedes que já fizeram check-in.</p></div></div><div class="metrics" id="relatorio-operacao"></div></div>
+        <div class="inline-grid span-12">
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Ocupação no período</h2><p class="card-help">Percentual de quartos reservados por noite.</p></div></div><div id="grafico-ocupacao" class="report-chart"></div></div>
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Origem das reservas</h2><p class="card-help">Canal informado no cadastro da reserva.</p></div></div><div id="grafico-origem" class="report-chart"></div></div>
+        </div>
+        <div class="inline-grid span-12">
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Previsão de ocupação</h2><p class="card-help">Próximos sete dias com base nas reservas ativas.</p></div></div><div id="tabela-previsao" class="forecast-list"></div></div>
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">ADR por categoria de quarto</h2><p class="card-help">Receita gerada dividida pelas diárias reservadas no período.</p></div></div><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Diárias</th><th>Receita gerada</th><th>ADR</th></tr></thead><tbody id="tabela-adr-categoria"></tbody></table></div></div>
+        </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Ações rápidas</h2><p class="card-help">Atalhos preservam as telas atuais de reservas, quartos e integrações.</p></div></div><div class="toolbar"><button class="btn btn-primary" type="button" onclick="switchTab('reservas')">Criar nova reserva</button><button class="btn btn-secondary" type="button" onclick="switchTab('quartos')">Ajustar tarifas dos quartos</button><a class="btn btn-secondary" href="https://admin.booking.com/" target="_blank" rel="noopener noreferrer">Abrir extranet Booking.com</a><a class="btn btn-secondary" href="https://www.airbnb.com/hosting/listings" target="_blank" rel="noopener noreferrer">Abrir gestão Airbnb</a></div><p class="card-help">Na extranet do Booking.com ou Airbnb, o proprietário pode alterar anúncios, fotos, tarifas, promoções e condições. A alteração direta pelo Hotel Master exige acesso às APIs de parceiros de cada plataforma, que não é habilitado por links públicos.</p></div>
       </div>
 
       <div id="tab-integracoes" class="tab">
         <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Canais e localização</h2><p class="card-help">Links públicos do hotel, Google Maps e localização.</p></div></div>
+          <div class="card-header"><div><h2 class="card-title">Canais e localização</h2><p class="card-help">Links públicos do hotel, Geoapify e localização.</p></div></div>
           <form id="form-integracoes" class="form-grid">
             <div class="field span-6"><label>Booking.com</label><input id="int-booking" type="url" placeholder="https://www.booking.com/..."></div>
             <div class="field span-6"><label>Airbnb</label><input id="int-airbnb" type="url" placeholder="https://www.airbnb.com/rooms/..."></div>
             <div class="field span-6"><label>Expedia</label><input id="int-expedia" type="url"></div>
             <div class="field span-6"><label>Hoteis.com</label><input id="int-hoteis" type="url"></div>
             <div class="field span-6"><label>Site próprio</label><input id="int-site" type="url"></div>
-            <div class="field span-6"><label>Google Maps</label><input id="int-maps-url" type="url"></div>
-            <div class="field span-6"><label>Nome no Google Maps</label><input id="int-maps-nome" maxlength="200"></div>
-            <div class="field span-6"><label>Place ID</label><input id="int-place-id" maxlength="300"></div>
+            <div class="field span-6"><label>WhatsApp do hotel (opcional)</label><input id="int-whatsapp" type="tel" maxlength="40" placeholder="55 + DDD + número"></div>
+            <div class="field span-12"><p class="card-help">Avisos automáticos de ordens exigem telefone e autorização do funcionário e credenciais WhatsApp Cloud API no servidor. A Meta pode exigir um modelo aprovado para mensagens iniciadas pelo hotel.</p></div>
+            <div class="field span-12"><p class="card-help" id="int-whatsapp-status">Presença das credenciais da WhatsApp Cloud API será mostrada ao abrir esta aba.</p></div>
+            <div class="field span-12"><p class="card-help" id="int-api-status">Status das APIs será carregado nesta tela.</p></div>
+            <div class="field span-6"><label>Link do mapa</label><input id="int-maps-url" type="url"></div>
+            <div class="field span-6"><label>Nome do local</label><input id="int-maps-nome" maxlength="200"></div>
+            <div class="field span-6"><label>ID do local (Geoapify)</label><input id="int-place-id" maxlength="300"></div>
             <div class="field span-12"><label>Endereço</label><input id="int-endereco" maxlength="500"></div>
             <div class="field"><label>Latitude</label><input id="int-lat" type="number" step="any"></div>
             <div class="field"><label>Longitude</label><input id="int-lng" type="number" step="any"></div>
-            <div class="form-actions"><button class="btn btn-secondary" type="button" onclick="pesquisarGoogleMaps()">Pesquisar Maps</button><button class="btn btn-primary" type="submit">Salvar integrações</button></div>
+            <div class="form-actions"><button class="btn btn-secondary" type="button" onclick="pesquisarGeoapify()">Pesquisar endereço (Geoapify)</button><button class="btn btn-primary" type="submit">Salvar integrações</button></div>
           </form>
           <div id="resultado-maps" style="margin-top:14px;"></div>
           <div id="mapa-hotel" style="margin-top:14px;"></div>
@@ -2687,15 +3349,23 @@ tr:last-child td{border-bottom:0}
       </div>
 
       <div id="tab-plataforma" class="tab">
+        <div class="metrics" id="plataforma-metricas"><div class="metric"><div class="metric-label">Visão SaaS</div><div class="metric-value">Carregando…</div></div></div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Infraestrutura, pagamentos e integrações</h2><p class="card-help">Status real de configuração e resposta do banco. APIs de canais dependem de acesso de parceiro.</p></div></div><div id="plataforma-saude" class="notice info">Verificando serviços…</div><h3>Uso de módulos (30 dias)</h3><div id="plataforma-modulos" class="notice info">Aguardando dados de uso.</div></div>
         <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Controle central dos hotéis, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
+          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Visão central dos hotéis, administradores, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
           <div id="plataforma-aviso" class="notice info">Carregando clientes.</div>
           <div class="table-wrap"><table><thead><tr><th>Hotel</th><th>Administrador(es)</th><th>Plano</th><th>Validade</th><th>Status</th><th>Controle</th></tr></thead><tbody id="tabela-plataforma"></tbody></table></div>
         </div>
         <div class="card">
-          <div class="card-header"><div><h2 class="card-title">Usuários dos hotéis</h2><p class="card-help">Veja todos os acessos e suspenda ou reative usuários individualmente.</p></div></div>
-          <div class="table-wrap"><table><thead><tr><th>Usuário</th><th>Hotel</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ação</th></tr></thead><tbody id="tabela-platform-usuarios"></tbody></table></div>
+          <div class="card-header"><div><h2 class="card-title">Usuários dos hotéis</h2><p class="card-help">Consulte contas e suspenda ou reative o acesso individual.</p></div></div>
+          <div id="plataforma-usuarios-aviso" class="notice info">Carregando usuários.</div>
+          <div class="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Hotel</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ação</th></tr></thead><tbody id="tabela-plataforma-usuarios"></tbody></table></div>
         </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Suporte e SLA</h2><p class="card-help">Chamados por hotel, tempo até a primeira resposta e acompanhamento.</p></div><button class="btn btn-secondary" type="button" onclick="carregarTicketsPlataforma()">Atualizar chamados</button></div><div id="tickets-plataforma-aviso" class="notice info">Carregando chamados.</div><div class="table-wrap"><table><thead><tr><th>Hotel / assunto</th><th>Prioridade</th><th>Status</th><th>Aberto em</th><th>1ª resposta</th><th>Ação</th></tr></thead><tbody id="tabela-tickets-plataforma"></tbody></table></div></div>
+      </div>
+      <div id="tab-suporte" class="tab">
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Suporte</h2><p class="card-help">Abra um chamado e acompanhe as respostas da equipe.</p></div></div><div class="form-grid"><div class="field span-6"><label>Assunto</label><input id="suporte-assunto" maxlength="160"></div><div class="field span-6"><label>Prioridade</label><select id="suporte-prioridade"><option>NORMAL</option><option>BAIXA</option><option>ALTA</option></select></div><div class="field span-12"><label>Detalhes</label><textarea id="suporte-mensagem" maxlength="5000"></textarea></div><div class="form-actions"><button class="btn btn-primary" type="button" onclick="abrirChamado()">Abrir chamado</button></div></div></div>
+        <div class="card"><div class="card-header"><h2 class="card-title">Meus chamados</h2><button class="btn btn-secondary" type="button" onclick="carregarChamados()">Atualizar</button></div><div id="suporte-lista" class="notice info">Carregando chamados.</div></div>
       </div>
     </section>
   </main>
@@ -2723,7 +3393,6 @@ const primeiraAba=CONTEXTO_USUARIO.role==='platform_admin'?'plataforma':'painel'
 const menusTenant = [
   {id:'painel', icone:'PD', nome:'Painel', permissao:'reports.view'},
   {id:'quartos', icone:'QT', nome:'Quartos', permissao:'rooms.view'},
-  {id:'hospedes', icone:'HP', nome:'Hóspedes', permissao:'guests.view'},
   {id:'categorias', icone:'CP', nome:'Categorias de pessoas', permissao:'categories.view'},
   {id:'reservas', icone:'RS', nome:'Reservas', permissao:'reservations.view'},
   {id:'servicos', icone:'SV', nome:'Serviços e pedidos', permissao:'services.view'},
@@ -2734,17 +3403,32 @@ const menusTenant = [
   {id:'relatorios', icone:'RL', nome:'Relatórios', permissao:'reports.view'},
   {id:'integracoes', icone:'IN', nome:'Integrações', permissao:'integrations.view'},
   {id:'whatsapp', icone:'WA', nome:'WhatsApp', permissao:'whatsapp.use'}
+  ,{id:'suporte', icone:'?', nome:'Suporte', permissao:'support.view'}
 ];
 const rolePerms={
   admin:new Set(['*']),
-  gerente:new Set(['rooms.view','guests.view','categories.view','reservations.view','services.view','orders.view','team.view','stock.view','finance.view','reports.view','integrations.view','whatsapp.use']),
-  recepcao:new Set(['rooms.view','guests.view','reservations.view','services.view','orders.view','whatsapp.use']),
-  limpeza:new Set(['rooms.view','services.view','orders.view']),
-  manutencao:new Set(['rooms.view','orders.view']),
-  financeiro:new Set(['rooms.view','guests.view','reservations.view','finance.view','reports.view'])
+  gerente:new Set(['rooms.view','rooms.manage','guests.view','guests.manage','categories.view','categories.manage','reservations.view','reservations.manage','reservations.pay','stock.view','stock.manage','finance.view','finance.manage','orders.view','orders.manage','services.view','services.manage','requests.view','requests.manage','reports.view','whatsapp.use','support.view']),
+  recepcao:new Set(['rooms.view','guests.view','guests.manage','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use','support.view']),
+  limpeza:new Set(['rooms.view','orders.view','orders.manage','requests.view','requests.manage','support.view']),
+  manutencao:new Set(['rooms.view','orders.view','orders.manage','requests.view','support.view']),
+  financeiro:new Set(['rooms.view','guests.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view','support.view'])
 };
 function pode(p){const s=rolePerms[CONTEXTO_USUARIO.role];return s&& (s.has('*')||s.has(p));}
 function menuPermitido(id,p){if(id==='estoque'&&CONTEXTO_USUARIO.possui_estoque===false)return false;if(id==='servicos'&&CONTEXTO_USUARIO.servicos_extras===false)return false;return CONTEXTO_USUARIO.role==='admin'||pode(p)||id==='painel';}
+function aplicarPermissoesDaTela(tab){
+  const cfg={
+    quartos:['rooms.manage',['form-quarto','form-lote']],categorias:['categories.manage',['form-cat']],
+    reservas:['reservations.manage',['form-reserva']],servicos:['services.manage',['form-servico']],
+    ordens:['orders.manage',['form-os']],equipe:['team.manage',['form-user']],
+    estoque:['stock.manage',['form-estoque']],financeiro:['finance.manage',['form-fin']],
+    integracoes:['integrations.manage',['form-integracoes']]
+  }[tab];
+  if(!cfg)return;
+  const permitido=!!pode(cfg[0]);
+  cfg[1].forEach(id=>{const form=document.getElementById(id);if(form&&form.closest('.card'))form.closest('.card').hidden=!permitido;});
+  if(tab==='reservas'&&!pode('guests.manage')){const form=document.getElementById('form-hospede');if(form&&form.closest('.card'))form.closest('.card').hidden=true;}
+  if(tab==='servicos'&&!pode('requests.manage')){const form=document.getElementById('form-pedido');if(form&&form.closest('.card'))form.closest('.card').hidden=true;}
+}
 function toast(msg,type=''){const host=document.getElementById('toast-host');const el=document.createElement('div');el.className='toast '+(type||'');el.textContent=msg;host.appendChild(el);setTimeout(()=>el.remove(),3500);}
 function escapar(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML;}
 function moeda(v){return 'R$ '+Number(v||0).toFixed(2).replace('.',',');}
@@ -2754,7 +3438,7 @@ function badgeStatus(s){
   let cl='badge-neutral';
   if(['PAGO','ATIVA','CONCLUIDA','ENTREGUE','DISPONIVEL','ATIVO'].includes(x))cl='badge-ok';
   else if(['PENDENTE','TESTE','ABERTO','EM_PREPARO','EM_ANDAMENTO','RESERVADO'].includes(x))cl='badge-pending';
-  else if(['SUSPENSA','CANCELADA','CANCELADO','BLOQUEADO','MANUTENCAO'].includes(x))cl='badge-danger';
+  else if(['SUSPENSA','SUSPENSO','CANCELADA','CANCELADO','BLOQUEADO','MANUTENCAO'].includes(x))cl='badge-danger';
   return '<span class="badge '+cl+'">'+escapar(x)+'</span>';
 }
 async function jsonFetch(url,opts={}){
@@ -2791,6 +3475,7 @@ function switchTab(tab,registrar=true){
   }
   if(registrar&&abaAtual&&abaAtual!==tab)historicoAbas.push(abaAtual);
   abaAtual=tab;
+  aplicarPermissoesDaTela(tab);
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   target.classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));
@@ -2800,8 +3485,10 @@ function switchTab(tab,registrar=true){
   document.getElementById('user-name').textContent=CONTEXTO_USUARIO.nome;
   document.getElementById('user-role').textContent=CONTEXTO_USUARIO.role_label;
   document.getElementById('hotel-name').textContent=hotel||'Sem hotel vinculado';
+  if(CONTEXTO_USUARIO.role!=='platform_admin')registrarUsoModulo(tab);
   loadTab(tab).catch(e=>toast(e.message,'error'));
 }
+function registrarUsoModulo(module){jsonFetch('/api/telemetria/modulo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({module})}).catch(()=>{});}
 function voltar(){
   if(historicoAbas.length){const x=historicoAbas.pop();switchTab(x,false);}
   else if(abaAtual!==primeiraAba){switchTab(primeiraAba,false);}
@@ -2817,7 +3504,8 @@ function popularSelect(elId,rows,placeholder,labelFn,valueFn){
   if([...el.options].some(x=>x.value===atual))el.value=atual;
 }
 async function carregarBase(){
-  const [q,h]=await Promise.all([jsonFetch('/api/quartos'),jsonFetch('/api/hospedes')]);
+  const q=await jsonFetch('/api/quartos');
+  const h=pode('guests.view')?await jsonFetch('/api/hospedes'):[];
   state.quartos=q||[];state.hospedes=h||[];
   popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
   popularSelect('p-quarto',state.quartos,null,x=>x.numero+' — '+x.tipo,x=>x.id);
@@ -2839,7 +3527,8 @@ async function carregarQuartos(){
   const tbody=document.getElementById('tabela-quartos');tbody.innerHTML='';
   state.quartos.forEach(q=>{
     const tr=document.createElement('tr');
-    tr.innerHTML='<td><strong>'+escapar(q.numero)+'</strong></td><td>'+escapar(q.tipo)+'</td><td>'+moeda(q.preco_diaria)+'</td><td>'+badgeStatus(q.status)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarQuarto('+q.id+')">Editar</button><button class="btn btn-danger" onclick="deletarQuarto('+q.id+')">Excluir</button></div></td>';
+    const acoes=pode('rooms.manage')?'<div class="row-actions"><button class="btn btn-secondary" onclick="editarQuarto('+q.id+')">Editar</button><button class="btn btn-danger" onclick="deletarQuarto('+q.id+')">Excluir</button></div>':'—';
+    tr.innerHTML='<td><strong>'+escapar(q.numero)+'</strong></td><td>'+escapar(q.tipo)+'</td><td>'+moeda(q.preco_diaria)+'</td><td>'+badgeStatus(q.status)+'</td><td>'+acoes+'</td>';
     tbody.appendChild(tr);
   });
   document.getElementById('contagem-quartos').textContent='('+state.quartos.length+')';
@@ -2873,7 +3562,7 @@ async function carregarHospedes(){
   state.hospedes.forEach(h=>{const tr=document.createElement('tr');tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong></td><td>'+escapar(h.documento||'-')+'</td><td>'+escapar(h.telefone||'-')+'</td><td>'+escapar(h.email||'-')+'</td><td><button class="btn btn-secondary" onclick="editarHospede('+h.id+')">Editar</button></td>';tbody.appendChild(tr);});
 }
 function limparHospedeForm(){document.getElementById('form-hospede').reset();document.getElementById('h-edit-id').value='';document.getElementById('h-cancel').classList.add('hidden');document.getElementById('h-submit').textContent='Salvar hóspede';document.getElementById('hospede-form-title').textContent='Novo hóspede';}
-function editarHospede(id){const h=state.hospedes.find(x=>x.id===id);if(!h)return;switchTab('hospedes');document.getElementById('h-edit-id').value=id;document.getElementById('h-nome').value=h.nome;document.getElementById('h-doc').value=h.documento||'';document.getElementById('h-tel').value=h.telefone||'';document.getElementById('h-email').value=h.email||'';document.getElementById('h-obs').value=h.observacoes||'';document.getElementById('h-cancel').classList.remove('hidden');document.getElementById('h-submit').textContent='Salvar alterações';document.getElementById('hospede-form-title').textContent='Editar hóspede';}
+function editarHospede(id){const h=state.hospedes.find(x=>x.id===id);if(!h)return;switchTab('reservas');document.getElementById('h-edit-id').value=id;document.getElementById('h-nome').value=h.nome;document.getElementById('h-doc').value=h.documento||'';document.getElementById('h-tel').value=h.telefone||'';document.getElementById('h-email').value=h.email||'';document.getElementById('h-obs').value=h.observacoes||'';document.getElementById('h-cancel').classList.remove('hidden');document.getElementById('h-submit').textContent='Salvar alterações';document.getElementById('hospede-form-title').textContent='Editar hóspede';}
 document.getElementById('form-hospede').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('h-edit-id').value;const body={nome:document.getElementById('h-nome').value,documento:document.getElementById('h-doc').value,telefone:document.getElementById('h-tel').value,email:document.getElementById('h-email').value,observacoes:document.getElementById('h-obs').value};try{await jsonFetch(id?'/api/hospedes/'+id:'/api/hospedes',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Hóspede atualizado.':'Hóspede cadastrado.','success');limparHospedeForm();carregarHospedes();}catch(e){toast(e.message,'error');}});
 document.getElementById('h-cancel').onclick=limparHospedeForm;
 
@@ -2885,19 +3574,22 @@ document.getElementById('form-cat').addEventListener('submit',async e=>{e.preven
 document.getElementById('cat-cancel').onclick=limparCategoriaForm;
 
 async function carregarReservas(){
-  const [rows,quartos,hospedes,faixas]=await Promise.all([jsonFetch('/api/reservas'),jsonFetch('/api/quartos'),jsonFetch('/api/hospedes'),jsonFetch('/api/faixas_etarias')]);
+  const [rows,quartos,hospedes]=await Promise.all([jsonFetch('/api/reservas'),jsonFetch('/api/quartos'),jsonFetch('/api/hospedes')]);
+  const faixas=pode('categories.view')?await jsonFetch('/api/faixas_etarias'):[];
   state.reservas=rows||[];state.quartos=quartos||[];state.hospedes=hospedes||[];state.faixas=faixas||[];
   popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
   popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);preencherFaixas();
   const tb=document.getElementById('tabela-reservas');tb.innerHTML='';
-  if(!state.reservas.length){tb.innerHTML='<tr><td colspan="8" class="empty">Nenhuma reserva cadastrada.</td></tr>';return;}
-  state.reservas.forEach(r=>{const tr=document.createElement('tr');const pagado=String(r.status_pagamento).toUpperCase()==='PAGO';const cancelada=String(r.status).toUpperCase()==='CANCELADA';tr.innerHTML='<td>'+r.id+'</td><td>'+escapar(r.hospede_nome||'Não informado')+'</td><td><strong>'+escapar(r.quarto_numero)+'</strong></td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+r.diarias+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(r.status_pagamento)+'</td><td><div class="row-actions">'+(!cancelada?'<button class="btn btn-secondary" onclick="editarReserva('+r.id+')">Editar</button>':'')+(!cancelada?'<button class="btn '+(pagado?'btn-warning':'btn-success')+'" onclick="alterarPagamentoReserva('+r.id+','+(pagado?'false':'true')+')">'+(pagado?'Não pago':'Pagou')+'</button>':'')+(!cancelada?'<button class="btn btn-danger" onclick="cancelarReserva('+r.id+')">Cancelar</button>':'')+'</div></td>';tb.appendChild(tr);});
+  if(!state.reservas.length){tb.innerHTML='<tr><td colspan="10" class="empty">Nenhuma reserva cadastrada.</td></tr>';return;}
+  state.reservas.forEach(r=>{const tr=document.createElement('tr');const pagado=String(r.status_pagamento).toUpperCase()==='PAGO';const cancelada=String(r.status).toUpperCase()==='CANCELADA';const mov=r.checkout_realizado_em?'Check-out realizado':r.checkin_realizado_em?'Check-in realizado':'Pendente';const botaoMov=!cancelada&&!r.checkin_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkin&quot;)">Check-in</button>':!cancelada&&!r.checkout_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkout&quot;)">Check-out</button>':'';tr.innerHTML='<td>'+r.id+'<br><span class="small">'+escapar(r.canal_origem||'Direto')+'</span></td><td>'+escapar(r.hospede_nome||'Não informado')+'</td><td><strong>'+escapar(r.quarto_numero)+'</strong></td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+r.diarias+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(r.status_pagamento)+'</td><td>'+escapar(r.observacoes||'-')+'</td><td>'+escapar(mov)+'<br>'+botaoMov+'</td><td><div class="row-actions">'+(!cancelada?'<button class="btn btn-secondary" onclick="editarReserva('+r.id+')">Editar</button>':'')+(!cancelada?'<button class="btn '+(pagado?'btn-warning':'btn-success')+'" onclick="alterarPagamentoReserva('+r.id+','+(pagado?'false':'true')+')">'+(pagado?'Não pago':'Pagou')+'</button>':'')+(!cancelada?'<button class="btn btn-danger" onclick="cancelarReserva('+r.id+')">Cancelar</button>':'')+'</div></td>';tb.appendChild(tr);});
 }
-function limparReservaForm(){document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();}
-function editarReserva(id){const r=state.reservas.find(x=>x.id===id);if(!r)return;switchTab('reservas');document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id;document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;}
+function alternarNovoHospedeReserva(){const box=document.getElementById('r-novo-hospede'),select=document.getElementById('r-hospede-id'),show=box.classList.contains('hidden');box.classList.toggle('hidden',!show);select.required=!show;document.getElementById('r-novo-nome').required=show;if(show)select.value='';}
+function limparReservaForm(){document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();}
+function editarReserva(id){const r=state.reservas.find(x=>x.id===id);if(!r)return;switchTab('reservas');document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id;document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;document.getElementById('r-canal').value=r.canal_origem||'Direto';document.getElementById('r-observacoes').value=r.observacoes||'';document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;}
+async function registrarMovimentacaoReserva(id,acao){try{const d=await jsonFetch('/api/reservas/'+id+'/movimentacao',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao})});toast(d.mensagem,'success');await carregarReservas();}catch(e){toast(e.message,'error');}}
 async function alterarPagamentoReserva(id,pago){const forma=pago?(prompt('Forma de pagamento (PIX, cartão, dinheiro etc.):','PIX')||'Não informado'):'Não informado';if(pago&&!confirm('Confirmar que a reserva foi paga e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar a reserva como não paga e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/reservas/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:forma})});toast('Pagamento da reserva atualizado.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
 async function cancelarReserva(id){if(!confirm('Cancelar esta reserva? O pagamento automático, se houver, será retirado do caixa.'))return;try{await jsonFetch('/api/reservas/'+id+'/cancelar',{method:'PUT'});toast('Reserva cancelada.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
-document.getElementById('form-reserva').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('r-edit-id').value;const comps=[...document.querySelectorAll('.faixa-input')].map(x=>({faixa_id:parseInt(x.dataset.id,10),quantidade:parseInt(x.value||'0',10)}));const body={hospede_id:parseInt(document.getElementById('r-hospede-id').value,10),quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,composicao:comps};try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();carregarReservas();}catch(e){toast(e.message,'error');}});
+document.getElementById('form-reserva').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('r-edit-id').value,novo=document.getElementById('r-novo-hospede').classList.contains('hidden')?null:{nome:document.getElementById('r-novo-nome').value,documento:document.getElementById('r-novo-doc').value,telefone:document.getElementById('r-novo-tel').value,email:document.getElementById('r-novo-email').value};const comps=[...document.querySelectorAll('.faixa-input')].map(x=>({faixa_id:parseInt(x.dataset.id,10),quantidade:parseInt(x.value||'0',10)}));const body={hospede_id:novo?null:(parseInt(document.getElementById('r-hospede-id').value,10)||null),novo_hospede:novo,quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,canal_origem:document.getElementById('r-canal').value,observacoes:document.getElementById('r-observacoes').value,composicao:comps};try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();await Promise.all([carregarReservas(),carregarHospedes()]);}catch(e){toast(e.message,'error');}});
 document.getElementById('r-cancel').onclick=limparReservaForm;
 
 async function carregarServicos(){
@@ -2917,22 +3609,22 @@ async function alterarStatusPedido(id){const status=prompt('Novo status: ABERTO,
 async function alterarPagamentoPedido(id,pago){if(pago&&!confirm('Confirmar pagamento e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar como não pago e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/pedidos/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:pago?(prompt('Forma de pagamento:','PIX')||'Não informado'):'Não informado'})});toast('Pagamento do pedido atualizado.','success');carregarPedidos();}catch(e){toast(e.message,'error');}}
 document.getElementById('form-pedido').addEventListener('submit',async e=>{e.preventDefault();const body={quarto_id:parseInt(document.getElementById('p-quarto').value,10),hospede_id:document.getElementById('p-hospede').value||null,servico_id:document.getElementById('p-servico').value||null,item:document.getElementById('p-item').value,quantidade:parseFloat(document.getElementById('p-qtd').value),preco_unitario:parseFloat(document.getElementById('p-preco').value),descricao:document.getElementById('p-desc').value};try{const d=await jsonFetch('/api/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Pedido lançado. Total '+moeda(d.total),'success');document.getElementById('form-pedido').reset();document.getElementById('p-qtd').value=1;document.getElementById('p-preco').value=0;carregarPedidos();}catch(e){toast(e.message,'error');}});
 
-async function carregarOrdens(){state.ordens=await jsonFetch('/api/ordens')||[];const tb=document.getElementById('tabela-os');tb.innerHTML='';if(!state.ordens.length){tb.innerHTML='<tr><td colspan="8" class="empty">Nenhuma ordem de serviço.</td></tr>';return;}state.ordens.forEach(o=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+o.id+'</td><td><strong>'+escapar(o.quarto)+'</strong></td><td>'+escapar(o.hospede_nome||'-')+'</td><td>'+escapar(o.tipo)+'</td><td>'+badgeStatus(o.prioridade)+'</td><td>'+escapar(o.responsavel_nome||'A definir')+'</td><td>'+badgeStatus(o.status)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarOrdem('+o.id+')">Editar</button><button class="btn btn-primary" onclick="avancarOrdem('+o.id+')">Status</button><button class="btn btn-danger" onclick="excluirOrdem('+o.id+')">Excluir</button></div></td>';tb.appendChild(tr);});
+async function carregarOrdens(){state.ordens=await jsonFetch('/api/ordens')||[];const tb=document.getElementById('tabela-os');tb.innerHTML='';if(!state.ordens.length){tb.innerHTML='<tr><td colspan="8" class="empty">Nenhuma ordem de serviço.</td></tr>';return;}state.ordens.forEach(o=>{const local='Quarto '+(o.quarto||'-')+(o.quarto_andar!==null&&o.quarto_andar!==undefined?' · '+o.quarto_andar+'º andar':'');const tr=document.createElement('tr');tr.innerHTML='<td>#'+o.id+'</td><td><strong>'+escapar(local)+'</strong></td><td>'+escapar(o.hospede_nome||'-')+'</td><td><strong>'+escapar(o.tipo)+'</strong><br><span class="small">'+escapar(o.descricao)+'</span></td><td>'+badgeStatus(o.prioridade)+'</td><td>'+escapar(o.responsavel_nome||'A definir')+(o.responsavel_telefone?'<br><span class="small">'+escapar(o.responsavel_telefone)+'</span>':'')+'</td><td>'+badgeStatus(o.status)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarOrdem('+o.id+')">Editar</button><button class="btn btn-primary" onclick="avancarOrdem('+o.id+')">Status</button><button class="btn btn-danger" onclick="excluirOrdem('+o.id+')">Excluir</button></div></td>';tb.appendChild(tr);});
   await carregarUsuariosParaOS();
 }
-async function carregarUsuariosParaOS(){if(CONTEXTO_USUARIO.role==='platform_admin')return;try{const rows=await jsonFetch('/api/usuarios');state.usuarios=rows||[];popularSelect('os-responsavel',state.usuarios.filter(x=>x.ativo),'A definir',x=>x.nome+' — '+x.role_label,x=>x.id);}catch(e){state.usuarios=[];}}
+async function carregarUsuariosParaOS(){if(CONTEXTO_USUARIO.role==='platform_admin')return;try{const rows=await jsonFetch('/api/usuarios');state.usuarios=rows||[];popularSelect('os-responsavel',state.usuarios.filter(x=>x.ativo),'A definir',x=>x.nome+' — '+x.role_label+(x.telefone?' · WhatsApp':'')+(x.whatsapp_notificacoes?' ✓':' ⚠'),x=>x.id);}catch(e){state.usuarios=[];}}
 function limparOsForm(){document.getElementById('form-os').reset();document.getElementById('os-edit-id').value='';document.getElementById('os-cancel').classList.add('hidden');document.getElementById('os-submit').textContent='Criar OS';document.getElementById('os-form-title').textContent='Nova ordem de serviço';}
 function editarOrdem(id){const o=state.ordens.find(x=>x.id===id);if(!o)return;switchTab('ordens');document.getElementById('os-edit-id').value=id;document.getElementById('os-quarto').value=o.quarto_id;document.getElementById('os-hospede').value=o.hospede_id||'';document.getElementById('os-tipo').value=o.tipo;document.getElementById('os-prioridade').value=o.prioridade;document.getElementById('os-responsavel').value=o.responsavel_id||'';document.getElementById('os-desc').value=o.descricao;document.getElementById('os-cancel').classList.remove('hidden');document.getElementById('os-submit').textContent='Salvar alterações';document.getElementById('os-form-title').textContent='Editar OS #'+id;}
 async function avancarOrdem(id){const s=prompt('Novo status: PENDENTE, EM_ANDAMENTO, CONCLUIDA ou CANCELADA','CONCLUIDA');if(!s)return;try{await jsonFetch('/api/ordens/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})});toast('Status da OS atualizado.','success');carregarOrdens();}catch(e){toast(e.message,'error');}}
 async function excluirOrdem(id){if(!confirm('Excluir esta OS?'))return;try{await jsonFetch('/api/ordens/'+id,{method:'DELETE'});toast('OS removida.','success');carregarOrdens();}catch(e){toast(e.message,'error');}}
-document.getElementById('form-os').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('os-edit-id').value;const body={quarto_id:parseInt(document.getElementById('os-quarto').value,10),hospede_id:document.getElementById('os-hospede').value||null,tipo:document.getElementById('os-tipo').value,prioridade:document.getElementById('os-prioridade').value,responsavel_id:document.getElementById('os-responsavel').value||null,descricao:document.getElementById('os-desc').value};try{await jsonFetch(id?'/api/ordens/'+id:'/api/ordens',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'OS atualizada.':'OS criada.','success');limparOsForm();carregarOrdens();}catch(e){toast(e.message,'error');}});
+document.getElementById('form-os').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('os-edit-id').value;const body={quarto_id:parseInt(document.getElementById('os-quarto').value,10),hospede_id:document.getElementById('os-hospede').value||null,tipo:document.getElementById('os-tipo').value,prioridade:document.getElementById('os-prioridade').value,responsavel_id:document.getElementById('os-responsavel').value||null,descricao:document.getElementById('os-desc').value};try{const d=await jsonFetch(id?'/api/ordens/'+id:'/api/ordens',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const wa=d.notificacao_whatsapp;if(!id&&wa){const mensagens={enviada:' Aviso enviado ao funcionário por WhatsApp.',nao_configurada:' Configure a WhatsApp Cloud API no servidor para ativar avisos.',destinatario_nao_configurado:' Cadastre o telefone e a autorização do funcionário para avisos.',telefone_invalido:' Confira o telefone do funcionário com DDI e DDD.',sem_responsavel:' Atribua um funcionário para enviar o aviso.'};toast((d.mensagem||'OS criada.')+(mensagens[wa.status]||''),wa.status==='enviada'?'success':'info');}else toast(id?'OS atualizada.':'OS criada.','success');limparOsForm();carregarOrdens();}catch(e){toast(e.message,'error');}});
 document.getElementById('os-cancel').onclick=limparOsForm;
 
-async function carregarEquipe(){if(CONTEXTO_USUARIO.role!=='admin')return;state.usuarios=await jsonFetch('/api/usuarios')||[];const tb=document.getElementById('tabela-equipe');tb.innerHTML='';state.usuarios.forEach(u=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(u.nome||u.username)+'</td><td>'+escapar(u.username)+'</td><td>'+escapar(u.role_label)+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(u.ativo?'ATIVO':'BLOQUEADO')+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarUsuario('+u.id+')">Editar</button>'+(u.ativo?'<button class="btn btn-danger" onclick="bloquearUsuario('+u.id+')">Bloquear</button>':'')+'</div></td>';tb.appendChild(tr);});}
+async function carregarEquipe(){if(CONTEXTO_USUARIO.role!=='admin')return;state.usuarios=await jsonFetch('/api/usuarios')||[];const tb=document.getElementById('tabela-equipe');tb.innerHTML='';state.usuarios.forEach(u=>{const wa=(u.telefone?escapar(u.telefone):'Sem telefone')+(u.whatsapp_notificacoes?' · avisos ativos':'');const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(u.nome||u.username)+'</td><td>'+escapar(u.username)+'</td><td>'+escapar(u.role_label)+'</td><td>'+wa+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(u.ativo?'ATIVO':'BLOQUEADO')+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarUsuario('+u.id+')">Editar</button>'+(u.ativo?'<button class="btn btn-danger" onclick="bloquearUsuario('+u.id+')">Bloquear</button>':'')+'</div></td>';tb.appendChild(tr);});}
 function limparUsuarioForm(){document.getElementById('form-user').reset();document.getElementById('u-edit-id').value='';document.getElementById('u-username').disabled=false;document.getElementById('u-password').required=true;document.getElementById('u-ativo').value='1';document.getElementById('u-cancel').classList.add('hidden');document.getElementById('u-submit').textContent='Criar acesso';document.getElementById('user-form-title').textContent='Novo acesso';}
-function editarUsuario(id){const u=state.usuarios.find(x=>x.id===id);if(!u)return;switchTab('equipe');document.getElementById('u-edit-id').value=id;document.getElementById('u-nome').value=u.nome||'';document.getElementById('u-username').value=u.username;document.getElementById('u-username').disabled=true;document.getElementById('u-role').value=u.role;document.getElementById('u-email').value=u.email||'';document.getElementById('u-password').value='';document.getElementById('u-password').required=false;document.getElementById('u-ativo').value=u.ativo?'1':'0';document.getElementById('u-cancel').classList.remove('hidden');document.getElementById('u-submit').textContent='Salvar alterações';document.getElementById('user-form-title').textContent='Editar acesso';}
+function editarUsuario(id){const u=state.usuarios.find(x=>x.id===id);if(!u)return;switchTab('equipe');document.getElementById('u-edit-id').value=id;document.getElementById('u-nome').value=u.nome||'';document.getElementById('u-username').value=u.username;document.getElementById('u-username').disabled=true;document.getElementById('u-role').value=u.role;document.getElementById('u-email').value=u.email||'';document.getElementById('u-telefone').value=u.telefone||'';document.getElementById('u-whatsapp-optin').checked=!!u.whatsapp_notificacoes;document.getElementById('u-password').value='';document.getElementById('u-password').required=false;document.getElementById('u-ativo').value=u.ativo?'1':'0';document.getElementById('u-cancel').classList.remove('hidden');document.getElementById('u-submit').textContent='Salvar alterações';document.getElementById('user-form-title').textContent='Editar acesso';}
 async function bloquearUsuario(id){if(!confirm('Bloquear este acesso?'))return;try{await jsonFetch('/api/usuarios/'+id,{method:'DELETE'});toast('Usuário bloqueado.','success');carregarEquipe();}catch(e){toast(e.message,'error');}}
-document.getElementById('form-user').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('u-edit-id').value;const body={nome:document.getElementById('u-nome').value,username:document.getElementById('u-username').value,role:document.getElementById('u-role').value,email:document.getElementById('u-email').value,ativo:document.getElementById('u-ativo').value==='1',password:document.getElementById('u-password').value};try{await jsonFetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Acesso atualizado.':'Acesso criado.','success');limparUsuarioForm();carregarEquipe();}catch(e){toast(e.message,'error');}});
+document.getElementById('form-user').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('u-edit-id').value;const body={nome:document.getElementById('u-nome').value,username:document.getElementById('u-username').value,role:document.getElementById('u-role').value,email:document.getElementById('u-email').value,telefone:document.getElementById('u-telefone').value,whatsapp_notificacoes:document.getElementById('u-whatsapp-optin').checked,ativo:document.getElementById('u-ativo').value==='1',password:document.getElementById('u-password').value};try{await jsonFetch(id?'/api/usuarios/'+id:'/api/usuarios',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Acesso atualizado.':'Acesso criado.','success');limparUsuarioForm();carregarEquipe();}catch(e){toast(e.message,'error');}});
 document.getElementById('u-cancel').onclick=limparUsuarioForm;
 
 async function carregarEstoque(){state.estoque=await jsonFetch('/api/estoque')||[];const tb=document.getElementById('tabela-estoque');tb.innerHTML='';state.estoque.forEach(x=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(x.item)+'</td><td>'+escapar(x.categoria)+'</td><td>'+x.quantidade+'</td><td>'+moeda(x.preco_unitario)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarEstoque('+x.id+')">Editar</button><button class="btn btn-danger" onclick="excluirEstoque('+x.id+')">Excluir</button></div></td>';tb.appendChild(tr);});}
@@ -2948,92 +3640,120 @@ function editarFinanceiro(id){const x=state.financeiro.find(s=>s.id===id);if(!x|
 document.getElementById('form-fin').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('f-edit-id').value;const body={tipo:document.getElementById('f-tipo').value,descricao:document.getElementById('f-desc').value,valor:parseFloat(document.getElementById('f-valor').value),categoria:document.getElementById('f-cat').value};try{await jsonFetch(id?'/api/financeiro/'+id:'/api/financeiro',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Lançamento atualizado.':'Lançamento realizado.','success');limparFinanceiroForm();carregarFinanceiro();}catch(e){toast(e.message,'error');}});
 document.getElementById('f-cancel').onclick=limparFinanceiroForm;
 
+function dataLocalISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function prepararPeriodoRelatorio(){const modo=document.getElementById('rel-periodo').value,hoje=new Date();hoje.setHours(12,0,0,0);let ini=new Date(hoje),fim=new Date(hoje);if(modo==='ontem'){ini.setDate(ini.getDate()-1);fim=new Date(ini);}else if(modo==='7dias')ini.setDate(ini.getDate()-6);else if(modo==='mes')ini=new Date(hoje.getFullYear(),hoje.getMonth(),1,12);else if(modo==='personalizado'){document.getElementById('rel-datas-personalizadas').classList.remove('hidden');if(!document.getElementById('rel-inicio').value)document.getElementById('rel-inicio').value=dataLocalISO(ini);if(!document.getElementById('rel-fim').value)document.getElementById('rel-fim').value=dataLocalISO(fim);return;}document.getElementById('rel-datas-personalizadas').classList.add('hidden');document.getElementById('rel-inicio').value=dataLocalISO(ini);document.getElementById('rel-fim').value=dataLocalISO(fim);}
+function desenharGraficoOcupacao(rows){const el=document.getElementById('grafico-ocupacao');if(!rows||!rows.length){el.textContent='Sem reservas para exibir.';return;}const w=700,h=230,p=28,vals=rows.map(x=>Number(x.ocupacao)||0),max=Math.max(100,...vals),pts=vals.map((v,i)=>`${p+(rows.length===1?0:i*(w-2*p)/(rows.length-1))},${h-p-(v/max)*(h-2*p)}`).join(' ');const marca=rows.length>12?Math.ceil(rows.length/6):1;el.innerHTML='<svg viewBox="0 0 '+w+' '+h+'" role="img" aria-label="Evolução da ocupação"><line x1="'+p+'" y1="'+(h-p)+'" x2="'+(w-p)+'" y2="'+(h-p)+'" stroke="#d7dee8"/><line x1="'+p+'" y1="'+p+'" x2="'+p+'" y2="'+(h-p)+'" stroke="#d7dee8"/><polyline points="'+pts+'" fill="none" stroke="#1f4f8f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>'+rows.filter((_,i)=>i%marca===0||i===rows.length-1).map((x,i)=>'<text x="'+(p+(rows.length===1?0:rows.indexOf(x)*(w-2*p)/(rows.length-1)))+'" y="'+(h-5)+'" text-anchor="middle" fill="#667085" font-size="11">'+x.data.slice(5)+'</text>').join('')+'</svg><div class="metric-note">Média do período: '+(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1)+'%</div>';}
+function desenharGraficoOrigem(rows){const el=document.getElementById('grafico-origem'),cores=['#1f4f8f','#12a594','#f59e0b','#a855f7','#ef4444','#64748b','#0ea5e9'],total=(rows||[]).reduce((a,x)=>a+Number(x.total||0),0);if(!total){el.textContent='Sem reservas cadastradas nesse período.';return;}let acc=0;const stops=rows.map((x,i)=>{const start=acc;acc+=Number(x.total||0)/total*100;return cores[i%cores.length]+' '+start+'% '+acc+'%';}).join(',');el.innerHTML='<div class="origin-layout"><div class="donut" style="background:conic-gradient('+stops+')"><div>'+total+'<small>reservas</small></div></div><div class="legend">'+rows.map((x,i)=>'<div><i style="background:'+cores[i%cores.length]+'"></i>'+escapar(x.canal)+' — '+x.total+' ('+(Number(x.total)/total*100).toFixed(0)+'%)</div>').join('')+'</div></div>';}
 async function carregarRelatorios(){
-  const d=await jsonFetch('/api/relatorios');if(!d)return;
-  const el=document.getElementById('relatorio-metricas');
-  const arr=[['Quartos',d.total_quartos,'Total cadastrado'],['Ocupados',d.quartos_ocupados,'Hoje'],['Taxa de ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%','Hoje'],['Receita paga',moeda(d.receita_total),'Hospedagem + serviços'],['Hospedagem paga',moeda(d.receita_hospedagem),'Reservas'],['Serviços pagos',moeda(d.receita_servicos),'Pedidos'],['ADR',moeda(d.adr),'Diária média paga'],['RevPAR',moeda(d.revpar),'Indicador']];el.innerHTML=arr.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
+  if(!document.getElementById('rel-inicio').value||!document.getElementById('rel-fim').value)prepararPeriodoRelatorio();
+  const ini=document.getElementById('rel-inicio').value,fim=document.getElementById('rel-fim').value;if(!ini||!fim){toast('Escolha as datas do relatório.','error');return;}
+  const d=await jsonFetch('/api/relatorios?inicio='+encodeURIComponent(ini)+'&fim='+encodeURIComponent(fim));if(!d)return;
+  const c=d.comparativo||{},delta=Number(c.variacao_ocupacao||0),deltaTexto=(delta>=0?'↑ ':'↓ ')+Math.abs(delta).toFixed(1)+' p.p. vs período anterior';
+  const arr=[['Ocupação média',Number(d.taxa_ocupacao).toFixed(1)+'%',deltaTexto],['Receita no caixa',moeda(d.receita_total),(Number(c.variacao_receita_percentual||0)>=0?'↑ ':'↓ ')+Math.abs(Number(c.variacao_receita_percentual||0)).toFixed(1)+'% vs período anterior'],['Receita gerada',moeda(d.receita_gerada),'Diárias que ocorreram no período'],['A receber',moeda(d.receita_a_vencer),'Parte gerada ainda pendente'],['ADR',moeda(d.adr),'Receita gerada por diária ocupada'],['RevPAR',moeda(d.revpar),'Receita gerada por quarto disponível'],['Cancelamentos',d.cancelamentos,'Reservas canceladas no período'],['Sem check-in hoje',d.no_show,d.no_show_percentual+'% das chegadas previstas'],['Ticket extra por hóspede',moeda(d.ticket_medio_hospede),'Consumo pago além da hospedagem']];
+  document.getElementById('relatorio-metricas').innerHTML=arr.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
+  const ops=[['Check-ins previstos',d.checkins_previstos],['Check-ins realizados',d.checkins_realizados],['Check-outs previstos',d.checkouts_previstos],['Check-outs realizados',d.checkouts_realizados],['Hóspedes in-house',d.hospedes_inhouse]];document.getElementById('relatorio-operacao').innerHTML=ops.map(x=>'<div class="metric"><div class="metric-label">'+x[0]+'</div><div class="metric-value">'+x[1]+'</div></div>').join('');
+  desenharGraficoOcupacao(d.ocupacao_serie);desenharGraficoOrigem(d.origem_reservas);
+  document.getElementById('tabela-previsao').innerHTML=(d.previsao_ocupacao||[]).map(x=>'<div class="forecast-row"><span>'+new Date(x.data+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit'})+'</span><div class="forecast-bar"><i style="width:'+Math.max(0,Math.min(100,Number(x.ocupacao)))+'%"></i></div><strong>'+Number(x.ocupacao).toFixed(0)+'%</strong><small>'+x.quartos+'/'+d.total_quartos+' quartos</small></div>').join('')||'Sem quartos cadastrados.';
+  document.getElementById('tabela-adr-categoria').innerHTML=(d.adr_categoria||[]).map(x=>'<tr><td>'+escapar(x.categoria)+'</td><td>'+x.diarias+'</td><td>'+moeda(x.receita)+'</td><td>'+moeda(x.adr)+'</td></tr>').join('')||'<tr><td colspan="4" class="empty">Sem diárias no período.</td></tr>';
 }
+document.getElementById('rel-periodo').addEventListener('change',()=>{prepararPeriodoRelatorio();if(document.getElementById('rel-periodo').value!=='personalizado')carregarRelatorios();});
+document.getElementById('rel-inicio').addEventListener('change',()=>{if(document.getElementById('rel-periodo').value==='personalizado')carregarRelatorios();});document.getElementById('rel-fim').addEventListener('change',()=>{if(document.getElementById('rel-periodo').value==='personalizado')carregarRelatorios();});
 async function carregarPainel(){
   const el=document.getElementById('tab-painel');
-  el.innerHTML='<div class="metrics" id="painel-metrics"></div><div class="card"><div class="card-header"><div><h2 class="card-title">Operação</h2><p class="card-help">Acesse rapidamente reservas, pedidos e ordens de serviço.</p></div></div><div class="toolbar"><button class="btn btn-primary js-open-reservas">Abrir reservas</button><button class="btn btn-secondary js-open-servicos">Abrir pedidos</button><button class="btn btn-secondary js-open-ordens">Abrir ordens de serviço</button></div></div>';
-  el.querySelector('.js-open-reservas')?.addEventListener('click',()=>switchTab('reservas'));
-  el.querySelector('.js-open-servicos')?.addEventListener('click',()=>switchTab('servicos'));
-  el.querySelector('.js-open-ordens')?.addEventListener('click',()=>switchTab('ordens'));
-  const d=await jsonFetch('/api/relatorios');const s=await jsonFetch('/api/assinatura');if(!d)return;
+  const atalhos=[['reservas','Abrir reservas'],['servicos','Abrir pedidos'],['ordens','Abrir ordens de serviço']].filter(([id])=>menuPermitido(id,(menusTenant.find(x=>x.id===id)||{}).permissao));
+  el.innerHTML=`<div class="metrics" id="painel-metrics"></div><div class="card"><div class="card-header"><div><h2 class="card-title">Operação</h2><p class="card-help">Atalhos disponíveis para o seu perfil.</p></div></div><div class="toolbar">${atalhos.map(([id,nome])=>'<button class="btn btn-secondary" onclick="switchTab(\''+id+'\')">'+escapar(nome)+'</button>').join('')}</div></div>`;
+  const metrics=document.getElementById('painel-metrics');
+  metrics.innerHTML='<div class="metric"><div class="metric-label">Painel</div><div class="metric-value">Carregando…</div></div>';
+  let d,s;
+  if(!pode('reports.view')){
+    try{
+      const quartos=await jsonFetch('/api/quartos')||[];
+      const ordens=pode('orders.view')?(await jsonFetch('/api/ordens')||[]):[];
+      metrics.innerHTML=[['Quartos cadastrados',quartos.length],['Ordens abertas',ordens.filter(x=>!['CONCLUIDA','CANCELADA'].includes(String(x.status||'').toUpperCase())).length]].map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
+    }catch(e){const aviso=document.createElement('div');aviso.className='notice danger';aviso.textContent='Não foi possível carregar os indicadores operacionais: '+e.message;el.insertBefore(aviso,metrics);}
+    return;
+  }
+  try{d=await jsonFetch('/api/relatorios');s=CONTEXTO_USUARIO.role==='admin'?await jsonFetch('/api/assinatura'):null;}
+  catch(e){const aviso=document.createElement('div');aviso.className='notice danger';aviso.textContent='Não foi possível carregar os indicadores: '+e.message;el.insertBefore(aviso,metrics);return;}
+  if(!d)return;
   const m=[['Quartos',d.total_quartos],['Ocupados',d.quartos_ocupados],['Ocupação',Number(d.taxa_ocupacao).toFixed(2)+'%'],['Receita paga',moeda(d.receita_total)]];
   document.getElementById('painel-metrics').innerHTML=m.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div></div>').join('');
   if(s){const card=document.createElement('div');card.className='notice '+(s.ativo?'success':'danger');card.textContent='Plano '+(s.plano_nome||'-')+' | status: '+(s.status||'-')+(s.periodo_fim?' | validade: '+s.periodo_fim:'');document.getElementById('tab-painel').insertBefore(card,document.getElementById('painel-metrics'));}
 }
 async function carregarIntegracoes(){
   const d=await jsonFetch('/api/integracoes');if(!d)return;
-  document.getElementById('int-booking').value=d.booking_url||'';document.getElementById('int-airbnb').value=d.airbnb_url||'';document.getElementById('int-expedia').value=d.expedia_url||'';document.getElementById('int-hoteis').value=d.hoteis_url||'';document.getElementById('int-site').value=d.website_url||'';document.getElementById('int-maps-url').value=d.maps_url||'';document.getElementById('int-maps-nome').value=d.maps_nome||'';document.getElementById('int-place-id').value=d.maps_place_id||'';document.getElementById('int-endereco').value=d.endereco||'';document.getElementById('int-lat').value=d.latitude??'';document.getElementById('int-lng').value=d.longitude??'';document.getElementById('int-webhook-url').value=d.webhook_asaas_url||'';renderMapa(d.maps_embed_url);
+  document.getElementById('int-booking').value=d.booking_url||'';document.getElementById('int-airbnb').value=d.airbnb_url||'';document.getElementById('int-expedia').value=d.expedia_url||'';document.getElementById('int-hoteis').value=d.hoteis_url||'';document.getElementById('int-site').value=d.website_url||'';document.getElementById('int-whatsapp').value=d.whatsapp_telefone||'';document.getElementById('int-whatsapp-status').textContent=d.whatsapp_api_configurada?'Credenciais da WhatsApp Cloud API presentes no servidor; o envio só será confirmado ao disparar uma mensagem.':'WhatsApp Cloud API pendente: adicione as credenciais do servidor para ativar os avisos.';document.getElementById('int-api-status').textContent='Geoapify Geocoding (servidor): '+(d.geoapify_api_configurada?'chave presente':'pendente')+' · Geoapify Static Maps (navegador): '+(d.geoapify_maps_configurada?'chave presente':'pendente')+' · Asaas: '+(d.asaas_configurada?'credenciais presentes':'pendente de credenciais')+' (presença verificada; conexão não testada)';document.getElementById('int-maps-url').value=d.maps_url||'';document.getElementById('int-maps-nome').value=d.maps_nome||'';document.getElementById('int-place-id').value=d.maps_place_id||'';document.getElementById('int-endereco').value=d.endereco||'';document.getElementById('int-lat').value=d.latitude??'';document.getElementById('int-lng').value=d.longitude??'';document.getElementById('int-webhook-url').value=d.webhook_asaas_url||'';renderMapa(d.maps_embed_url);
   await carregarPlanos();
 }
 async function carregarPlanos(){state.planos=await jsonFetch('/api/planos')||[];const el=document.getElementById('saas-plano');el.innerHTML=state.planos.map(p=>'<option value="'+p.id+'">'+escapar(p.nome)+' — '+moeda(p.preco_mensal)+'/mês</option>').join('');state.sub=await jsonFetch('/api/assinatura');if(state.sub){document.getElementById('saas-status').value=state.sub.status||'';document.getElementById('saas-fim').value=state.sub.periodo_fim||state.sub.trial_ate||'';}}
 async function contratarPlano(){const id=parseInt(document.getElementById('saas-plano').value,10);try{const d=await jsonFetch('/api/assinatura/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano_id:id})});if(d&&d.checkout_url)window.open(d.checkout_url,'_blank','noopener,noreferrer');else toast(d.mensagem||'Checkout criado.','success');}catch(e){toast(e.message,'error');}}
-document.getElementById('form-integracoes').addEventListener('submit',async e=>{e.preventDefault();const body={booking_url:document.getElementById('int-booking').value.trim(),airbnb_url:document.getElementById('int-airbnb').value.trim(),expedia_url:document.getElementById('int-expedia').value.trim(),hoteis_url:document.getElementById('int-hoteis').value.trim(),website_url:document.getElementById('int-site').value.trim(),maps_url:document.getElementById('int-maps-url').value.trim(),maps_nome:document.getElementById('int-maps-nome').value.trim(),maps_place_id:document.getElementById('int-place-id').value.trim(),endereco:document.getElementById('int-endereco').value.trim(),latitude:document.getElementById('int-lat').value||null,longitude:document.getElementById('int-lng').value||null};try{const d=await jsonFetch('/api/integracoes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(d.mensagem,'success');renderMapa(d.integracao?.maps_embed_url||null);}catch(e){toast(e.message,'error');}});
-async function pesquisarGoogleMaps(){const q=(document.getElementById('int-maps-nome').value||document.getElementById('int-endereco').value||'').trim();if(q.length<3){toast('Informe nome ou endereço.','error');return;}try{const d=await jsonFetch('/api/integracoes/maps/pesquisar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});const box=document.getElementById('resultado-maps');box.innerHTML='';(d.resultados||[]).forEach(p=>{const b=document.createElement('button');b.type='button';b.className='btn btn-secondary';b.style.margin='4px';b.textContent=(p.nome||'Local')+' — '+(p.endereco||'');b.onclick=()=>{document.getElementById('int-maps-nome').value=p.nome||'';document.getElementById('int-place-id').value=p.id||'';document.getElementById('int-endereco').value=p.endereco||'';document.getElementById('int-lat').value=p.latitude??'';document.getElementById('int-lng').value=p.longitude??'';document.getElementById('int-maps-url').value=p.maps_url||'';};box.appendChild(b);});if(!(d.resultados||[]).length)box.textContent='Nenhum local encontrado.';}catch(e){toast(e.message,'error');}}
-function renderMapa(url){const box=document.getElementById('mapa-hotel');box.innerHTML='';if(!url){box.className='notice info';box.textContent='Mapa incorporado disponível após configurar a chave do Google Maps no servidor.';return;}box.className='';const f=document.createElement('iframe');f.src=url;f.width='100%';f.height='350';f.style.border='0';f.loading='lazy';f.allowFullscreen=true;f.referrerPolicy='strict-origin-when-cross-origin';box.appendChild(f);}
+document.getElementById('form-integracoes').addEventListener('submit',async e=>{e.preventDefault();const body={booking_url:document.getElementById('int-booking').value.trim(),airbnb_url:document.getElementById('int-airbnb').value.trim(),expedia_url:document.getElementById('int-expedia').value.trim(),hoteis_url:document.getElementById('int-hoteis').value.trim(),website_url:document.getElementById('int-site').value.trim(),whatsapp_telefone:document.getElementById('int-whatsapp').value.trim(),maps_url:document.getElementById('int-maps-url').value.trim(),maps_nome:document.getElementById('int-maps-nome').value.trim(),maps_place_id:document.getElementById('int-place-id').value.trim(),endereco:document.getElementById('int-endereco').value.trim(),latitude:document.getElementById('int-lat').value||null,longitude:document.getElementById('int-lng').value||null};try{const d=await jsonFetch('/api/integracoes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(d.mensagem,'success');renderMapa(d.integracao?.maps_embed_url||null);}catch(e){toast(e.message,'error');}});
+async function pesquisarGeoapify(){const q=(document.getElementById('int-maps-nome').value||document.getElementById('int-endereco').value||'').trim();if(q.length<3){toast('Informe nome ou endereço.','error');return;}try{const d=await jsonFetch('/api/integracoes/maps/pesquisar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q})});const box=document.getElementById('resultado-maps');box.innerHTML='';(d.resultados||[]).forEach(p=>{const b=document.createElement('button');b.type='button';b.className='btn btn-secondary';b.style.margin='4px';b.textContent=(p.nome||'Local')+' — '+(p.endereco||'');b.onclick=()=>{document.getElementById('int-maps-nome').value=p.nome||'';document.getElementById('int-place-id').value=p.id||'';document.getElementById('int-endereco').value=p.endereco||'';document.getElementById('int-lat').value=p.latitude??'';document.getElementById('int-lng').value=p.longitude??'';document.getElementById('int-maps-url').value=p.maps_url||'';};box.appendChild(b);});if(!(d.resultados||[]).length)box.textContent='Nenhum local encontrado.';}catch(e){toast(e.message,'error');}}
+function renderMapa(url){const box=document.getElementById('mapa-hotel');box.innerHTML='';if(!url){box.className='notice info';box.textContent='Mapa disponível após configurar GEOAPIFY_MAPS_API_KEY no .env e informar coordenadas.';return;}box.className='';const img=document.createElement('img');img.src=url;img.alt='Mapa da localização do hotel';img.width=800;img.height=350;img.style.width='100%';img.style.height='auto';img.style.borderRadius='12px';img.loading='lazy';box.appendChild(img);const credit=document.createElement('small');credit.textContent='Mapa © Geoapify · dados © OpenStreetMap contributors';box.appendChild(credit);}
 function preencherWhatsApp(){document.getElementById('wa-msg').value=document.getElementById('wa-template').value;}
 document.getElementById('wa-template').addEventListener('change',preencherWhatsApp);
 preencherWhatsApp();
 function enviarWhatsApp(){const tel=document.getElementById('wa-tel').value.replace(/\\D/g,'');if(tel.length<10){toast('Informe um telefone válido com DDD.','error');return;}window.open('https://wa.me/'+tel+'?text='+encodeURIComponent(document.getElementById('wa-msg').value),'_blank','noopener,noreferrer');}
 
-async function carregarPlataforma(){
-  const aviso=document.getElementById('plataforma-aviso');
-  const tb=document.getElementById('tabela-plataforma');
-  const tu=document.getElementById('tabela-platform-usuarios');
-  aviso.className='notice info';
-  aviso.textContent='Atualizando hotéis e usuários...';
+async function carregarPlataformaUsuarios(){
+  const aviso=document.getElementById('plataforma-usuarios-aviso');
+  const tb=document.getElementById('tabela-plataforma-usuarios');
+  aviso.className='notice info';aviso.textContent='Atualizando usuários...';tb.innerHTML='';
   try{
-    const [hotels,plans,users]=await Promise.all([
-      jsonFetch('/api/platform/hoteis'),
-      jsonFetch('/api/planos'),
-      jsonFetch('/api/platform/usuarios')
-    ]);
-    state.planos=plans||[];
-    tb.innerHTML='';
+    const usuarios=await jsonFetch('/api/platform/usuarios');
+    if(!usuarios||!usuarios.length){aviso.className='notice info';aviso.textContent='Nenhum usuário de hotel cadastrado.';return;}
+    usuarios.forEach(u=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML='<td>'+escapar(u.nome||u.username)+'<div class="small">'+escapar(u.username)+'</div></td><td>'+escapar(u.email||'-')+'</td><td>'+escapar(u.hotel_nome||'Sem hotel')+'</td><td>'+escapar(u.role)+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(Number(u.ativo)?'ATIVO':'SUSPENSO')+'</td><td></td>';
+      const botao=document.createElement('button');botao.type='button';botao.className='btn '+(Number(u.ativo)?'btn-danger':'btn-success');botao.textContent=Number(u.ativo)?'Suspender':'Reativar';
+      botao.addEventListener('click',()=>alternarStatusUsuario(u.id,!Number(u.ativo)));
+      tr.lastElementChild.appendChild(botao);tb.appendChild(tr);
+    });
+    aviso.className='notice success';aviso.textContent=usuarios.length+' usuário(s) encontrado(s).';
+  }catch(e){aviso.className='notice danger';aviso.textContent=e.message;}
+}
+async function carregarPlataformaMetricas(){
+  const box=document.getElementById('plataforma-metricas'),saude=document.getElementById('plataforma-saude');
+  try{
+    const d=await jsonFetch('/api/platform/metricas');
+    const itens=[['MRR',moeda(d.mrr),'Assinaturas ativas'],['ARR',moeda(d.arr),'MRR × 12'],['Clientes',d.clientes,'Hotéis cadastrados'],['Em teste',d.em_teste,'Assinaturas de avaliação'],['Inadimplentes',d.inadimplentes,'Período vencido'],['Onboardings',d.onboardings_30d,'Novos hotéis em 30 dias'],['Sem configuração',d.onboarding_sem_quartos,'Hotéis ainda sem quartos cadastrados'],['Churn estimado',d.churn_estimado_30d_percentual+'%','Cancelamentos registrados nos últimos 30 dias'],['LTV / CAC',d.ltv_cac===null?'Configure SAAS_CAC_ESTIMADO':d.ltv_cac+'×',d.ltv_estimado===null?'Sem histórico suficiente para estimar LTV':'LTV estimado: '+moeda(d.ltv_estimado)],['Reservas no mês',d.reservas_mes,'Check-ins hoje: '+d.checkins_hoje],['Check-outs hoje',d.checkouts_hoje,'Quartos: '+d.quartos_cadastrados],['Falhas de webhook',d.webhooks_com_erro_30d,'Últimos 30 dias'],['Chamados abertos',d.tickets_abertos,'Aguardando acompanhamento'],['SLA 1ª resposta',d.sla_media_primeira_resposta_horas===null?'Sem respostas ainda':d.sla_media_primeira_resposta_horas+' h','Média histórica dos chamados respondidos']];
+    box.innerHTML=itens.map(x=>'<div class="metric"><div class="metric-label">'+escapar(x[0])+'</div><div class="metric-value">'+escapar(x[1])+'</div><div class="metric-note">'+escapar(x[2])+'</div></div>').join('');
+    const i=d.integracoes,infra=d.infra;const linha=(nome,ok)=>'<li>'+escapar(nome)+': <strong>'+escapar(ok?'configurado':'pendente')+'</strong></li>';
+    saude.className='notice '+(infra.banco_responde?'success':'danger');saude.innerHTML='<strong>Banco:</strong> '+escapar(infra.banco)+' respondeu em '+escapar(infra.latencia_ms)+' ms. <strong>Asaas:</strong> '+(i.asaas_configurado?'credenciais presentes; pagamento confirmado por webhook':'pendente de credenciais/URL pública')+'.<ul>'+linha('Geoapify Geocoding (servidor)',i.geoapify_configurado)+linha('Geoapify Static Maps',i.geoapify_maps_configurado)+linha('WhatsApp Cloud API',i.whatsapp_configurado)+'</ul><p>Booking.com, Airbnb e Expedia não estão conectados por API nesta instalação; o painel mostra acesso às extranets. A conexão direta exige credenciais, autorização e, conforme o canal, habilitação de parceiro.</p>';
+    const mod=document.getElementById('plataforma-modulos');mod.innerHTML=(d.uso_modulos_30d||[]).length?d.uso_modulos_30d.map(x=>'<div>'+escapar(x.module)+': <strong>'+escapar(x.acessos)+'</strong> acessos</div>').join(''):'Nenhum acesso registrado nos últimos 30 dias.';
+  }catch(e){box.innerHTML='<div class="notice danger">'+escapar(e.message)+'</div>';}
+}
+async function carregarTicketsPlataforma(){
+  const box=document.getElementById('tickets-plataforma-aviso'),tb=document.getElementById('tabela-tickets-plataforma');if(!box||!tb)return;
+  try{const rows=await jsonFetch('/api/platform/tickets');tb.innerHTML='';if(!rows.length){box.className='notice info';box.textContent='Nenhum chamado recebido.';return;}
+    rows.forEach(t=>{const tr=document.createElement('tr');const primeira=t.primeira_resposta_em?dataHora(t.primeira_resposta_em):'Pendente';tr.innerHTML='<td><strong>'+escapar(t.hotel_nome)+'</strong><div>'+escapar(t.assunto)+'</div><div class="small">'+escapar((t.mensagens||[]).map(m=>m.autor_role+': '+m.mensagem).join(' · '))+'</div></td><td>'+escapar(t.prioridade)+'</td><td>'+escapar(t.status)+'</td><td>'+escapar(dataHora(t.criado_em))+'</td><td>'+escapar(primeira)+'</td><td></td>';const b=document.createElement('button');b.className='btn btn-primary';b.textContent='Responder / atualizar';b.onclick=async()=>{const resposta=prompt('Resposta ao hotel (deixe vazio para apenas mudar o status):');if(resposta===null)return;const status=prompt('Status: ABERTO, EM_ATENDIMENTO, AGUARDANDO_CLIENTE ou RESOLVIDO',t.status==='ABERTO'?'EM_ATENDIMENTO':t.status);if(!status)return;try{await jsonFetch('/api/platform/tickets/'+t.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({resposta,status})});await carregarTicketsPlataforma();await carregarPlataformaMetricas();}catch(e){toast(e.message,'error');}};tr.lastElementChild.appendChild(b);tb.appendChild(tr);});box.className='notice success';box.textContent=rows.length+' chamado(s). A primeira resposta registrada fica visível para acompanhar o SLA.';
+  }catch(e){box.className='notice danger';box.textContent=e.message;}
+}
+async function carregarChamados(){const box=document.getElementById('suporte-lista');if(!box)return;try{const rows=await jsonFetch('/api/suporte/tickets');box.innerHTML='';if(!rows.length){box.className='notice info';box.textContent='Você ainda não abriu chamados.';return;}rows.forEach(t=>{const card=document.createElement('div');card.className='notice '+(t.status==='RESOLVIDO'?'success':'info');const head=document.createElement('strong');head.textContent='#'+t.id+' · '+t.assunto+' · '+t.status;card.appendChild(head);(t.mensagens||[]).forEach(m=>{const p=document.createElement('p');p.textContent=m.autor_role+': '+m.mensagem;card.appendChild(p);});if(t.status!=='RESOLVIDO'){const b=document.createElement('button');b.className='btn btn-secondary';b.textContent='Responder';b.onclick=async()=>{const mensagem=prompt('Escreva sua resposta (mínimo 8 caracteres):');if(!mensagem)return;try{await jsonFetch('/api/suporte/tickets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket_id:t.id,mensagem})});await carregarChamados();}catch(e){toast(e.message,'error');}};card.appendChild(b);}box.appendChild(card);});}catch(e){box.className='notice danger';box.textContent=e.message;}}
+async function abrirChamado(){const assunto=document.getElementById('suporte-assunto').value,mensagem=document.getElementById('suporte-mensagem').value,prioridade=document.getElementById('suporte-prioridade').value;try{await jsonFetch('/api/suporte/tickets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assunto,mensagem,prioridade})});document.getElementById('suporte-assunto').value='';document.getElementById('suporte-mensagem').value='';toast('Chamado aberto.','success');await carregarChamados();}catch(e){toast(e.message,'error');}}
+async function alternarStatusUsuario(id,ativo){
+  const acao=ativo?'reativar':'suspender';
+  if(!confirm('Confirma '+acao+' o acesso deste usuário?'))return;
+  try{await jsonFetch('/api/platform/usuarios/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ativo})});toast(ativo?'Acesso reativado.':'Acesso suspenso.','success');await carregarPlataformaUsuarios();}
+  catch(e){toast(e.message,'error');}
+}
+async function carregarPlataforma(){
+  const aviso=document.getElementById('plataforma-aviso');const tb=document.getElementById('tabela-plataforma');aviso.className='notice info';aviso.textContent='Atualizando clientes...';
+  try{
+    const [hotels,plans]=await Promise.all([jsonFetch('/api/platform/hoteis'),jsonFetch('/api/planos')]);state.planos=plans||[];tb.innerHTML='';await carregarPlataformaMetricas();
     (hotels||[]).forEach(h=>{
       const adminNames=(h.admins||[]).map(a=>a.nome||a.username).join(', ')||'Sem administrador ativo';
-      const sub=h.assinatura||{};
-      const status=h.bloqueado?'BLOQUEADO':(sub.status||'SEM ASSINATURA');
-      const validade=sub.periodo_fim||sub.trial_ate||'-';
+      const sub=h.assinatura||{};const status=h.bloqueado?'BLOQUEADO':(sub.status||'SEM ASSINATURA');const validade=sub.periodo_fim||sub.trial_ate||'-';
       const tr=document.createElement('tr');
       const planSel=state.planos.map(p=>'<option value="'+p.id+'" '+(String(p.id)===String(sub.plano_id)?'selected':'')+'>'+escapar(p.nome)+'</option>').join('');
       const stSel=['ATIVA','TESTE','SUSPENSA','CANCELADA'].map(x=>'<option value="'+x+'" '+(String(sub.status||'')===x?'selected':'')+'>'+x+'</option>').join('');
       tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong><div class="small">'+escapar(h.local||'-')+'</div></td><td>'+escapar(adminNames)+'</td><td><select id="plan-'+h.id+'">'+planSel+'</select></td><td><input id="dias-'+h.id+'" type="number" min="0" max="3660" value="'+(sub.periodo_fim?Math.max(0,Math.round((new Date(sub.periodo_fim)-new Date())/86400000)):30)+'" style="width:90px;padding:7px;border:1px solid #ccd3dd;border-radius:7px"> dias</td><td><span class="platform-status '+(h.bloqueado?'platform-blocked':'platform-open')+'">'+escapar(status)+'</span></td><td><div class="row-actions"><select id="status-'+h.id+'" style="padding:7px;border:1px solid #ccd3dd;border-radius:7px">'+stSel+'</select><button class="btn btn-primary" onclick="salvarAssinaturaPlataforma('+h.id+')">Salvar</button><button class="btn '+(h.bloqueado?'btn-success':'btn-danger')+'" onclick="alternarBloqueio('+h.id+','+(h.bloqueado?'false':'true')+')">'+(h.bloqueado?'Liberar':'Bloquear')+'</button></div></td>';
       tb.appendChild(tr);
     });
-    tu.innerHTML='';
-    (users||[]).forEach(u=>{
-      const tr=document.createElement('tr');
-      const status=u.ativo?'ATIVO':'SUSPENSO';
-      const hotel=u.hotel_nome||'Administrador SaaS';
-      const acao=u.role==='platform_admin'
-        ? '<span class="small">Conta protegida</span>'
-        : '<button class="btn '+(u.ativo?'btn-danger':'btn-success')+'" onclick="alterarUsuarioPlataforma('+u.id+','+(u.ativo?'false':'true')+')">'+(u.ativo?'Suspender':'Reativar')+'</button>';
-      tr.innerHTML='<td><strong>'+escapar(u.nome||u.username)+'</strong><div class="small">'+escapar(u.username)+'</div></td><td>'+escapar(hotel)+'</td><td>'+escapar(ROLE_LABELS_JS(u.role))+'</td><td>'+escapar(dataHora(u.ultimo_login))+'</td><td>'+badgeStatus(status)+'</td><td>'+acao+'</td>';
-      tu.appendChild(tr);
-    });
-    aviso.className='notice success';
-    aviso.textContent=(hotels||[]).length+' hotel(is) e '+(users||[]).length+' usuário(s) encontrados.';
-  }catch(e){
-    aviso.className='notice danger';
-    aviso.textContent=e.message;
-  }
-}
-function ROLE_LABELS_JS(role){
-  const labels={platform_admin:'Administrador do SaaS',admin:'Administrador do Hotel',gerente:'Gerente',recepcao:'Recepção',limpeza:'Limpeza',manutencao:'Manutenção',financeiro:'Financeiro'};
-  return labels[role]||role||'-';
-}
-async function alterarUsuarioPlataforma(id,ativo){
-  const texto=ativo?'Reativar este usuário?':'Suspender este usuário?';
-  if(!confirm(texto))return;
-  try{
-    await jsonFetch('/api/platform/usuarios/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({ativo})});
-    toast(ativo?'Usuário reativado.':'Usuário suspenso.','success');
-    carregarPlataforma();
-  }catch(e){toast(e.message,'error');}
+    aviso.className='notice success';aviso.textContent=(hotels||[]).length+' hotel(is) encontrado(s).';
+    await carregarPlataformaUsuarios();
+    await carregarTicketsPlataforma();
+  }catch(e){aviso.className='notice danger';aviso.textContent=e.message;}
 }
 async function alternarBloqueio(id,bloquear){const motivo=bloquear?(prompt('Motivo do bloqueio:','Pagamento pendente')||'Pagamento pendente'):'';if(bloquear&&!confirm('Bloquear o acesso deste hotel?'))return;if(!bloquear&&!confirm('Liberar o acesso deste hotel?'))return;try{await jsonFetch('/api/platform/hoteis/'+id+'/bloqueio',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({bloqueado:bloquear,motivo})});toast(bloquear?'Hotel bloqueado.':'Hotel liberado.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}
 async function salvarAssinaturaPlataforma(id){const plano_id=parseInt(document.getElementById('plan-'+id).value,10),status=document.getElementById('status-'+id).value,dias=parseInt(document.getElementById('dias-'+id).value,10);try{await jsonFetch('/api/platform/assinaturas/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({plano_id,status,dias})});toast('Assinatura atualizada.','success');carregarPlataforma();}catch(e){toast(e.message,'error');}}
@@ -3042,9 +3762,8 @@ async function loadTab(tab){
   if(CONTEXTO_USUARIO.role==='platform_admin'){if(tab==='plataforma')await carregarPlataforma();return;}
   if(tab==='painel')await carregarPainel();
   else if(tab==='quartos'){await carregarQuartos();}
-  else if(tab==='hospedes'){await carregarHospedes();}
   else if(tab==='categorias'){await carregarCategorias();}
-  else if(tab==='reservas'){await carregarReservas();}
+  else if(tab==='reservas'){await carregarReservas();await carregarHospedes();}
   else if(tab==='servicos'){await carregarBase();await carregarServicos();await carregarPedidos();}
   else if(tab==='ordens'){await carregarBase();await carregarOrdens();}
   else if(tab==='equipe'){await carregarEquipe();}
@@ -3052,9 +3771,13 @@ async function loadTab(tab){
   else if(tab==='financeiro'){await carregarFinanceiro();}
   else if(tab==='relatorios'){await carregarRelatorios();}
   else if(tab==='integracoes'){await carregarIntegracoes();}
+  else if(tab==='suporte'){await carregarChamados();}
   else if(tab==='whatsapp'){preencherWhatsApp();}
 }
 
+const painelHospedes=document.getElementById('painel-hospedes-reserva');
+painelHospedes.classList.add('reserva-hospedes');
+document.getElementById('tab-reservas').appendChild(painelHospedes);
 renderNav();
 switchTab(primeiraAba,false);
 </script>
@@ -3063,5 +3786,4 @@ switchTab(primeiraAba,false);
 
 
 if __name__ == '__main__':
-    init_db()
     app.run(host=os.getenv('HOST','0.0.0.0'), port=int(os.getenv('PORT','5000')), debug=os.getenv('FLASK_DEBUG','0').lower() in ('1','true','yes'))

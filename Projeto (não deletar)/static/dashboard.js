@@ -19,7 +19,7 @@ const primeiraAba=CONTEXTO_USUARIO.role==='platform_admin'?'plataforma':'painel'
 const menusTenant = [
   {id:'painel', icone:'PD', nome:'Painel', permissao:'reports.view'},
   {id:'quartos', icone:'QT', nome:'Quartos', permissao:'rooms.view'},
-  {id:'categorias', icone:'CP', nome:'Faixas etárias', permissao:'categories.view'},
+  {id:'categorias', icone:'FE', nome:'Faixas etárias', permissao:'categories.view'},
   {id:'reservas', icone:'RS', nome:'Reservas', permissao:'reservations.view'},
   {id:'servicos', icone:'SV', nome:'Serviços e pedidos', permissao:'services.view'},
   {id:'ordens', icone:'OS', nome:'Ordens de serviço', permissao:'orders.view'},
@@ -34,10 +34,10 @@ const menusTenant = [
 const rolePerms={
   admin:new Set(['*']),
   gerente:new Set(['rooms.view','rooms.manage','guests.view','guests.manage','categories.view','categories.manage','reservations.view','reservations.manage','reservations.pay','stock.view','stock.manage','finance.view','finance.manage','orders.view','orders.manage','services.view','services.manage','requests.view','requests.manage','reports.view','whatsapp.use','support.view']),
-  recepcao:new Set(['rooms.view','guests.view','guests.manage','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use','support.view']),
+  recepcao:new Set(['rooms.view','guests.view','guests.manage','categories.view','reservations.view','reservations.manage','reservations.pay','orders.view','orders.manage','services.view','requests.view','requests.manage','whatsapp.use','support.view']),
   limpeza:new Set(['rooms.view','orders.view','orders.manage','requests.view','requests.manage','support.view']),
   manutencao:new Set(['rooms.view','orders.view','orders.manage','requests.view','support.view']),
-  financeiro:new Set(['rooms.view','guests.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view','support.view'])
+  financeiro:new Set(['rooms.view','guests.view','categories.view','reservations.view','reservations.pay','finance.view','finance.manage','requests.view','requests.manage','reports.view','support.view'])
 };
 function pode(p){const s=rolePerms[CONTEXTO_USUARIO.role];return s&& (s.has('*')||s.has(p));}
 function menuPermitido(id,p){if(id==='estoque'&&CONTEXTO_USUARIO.possui_estoque===false)return false;if(id==='servicos'&&CONTEXTO_USUARIO.servicos_extras===false)return false;return CONTEXTO_USUARIO.role==='admin'||pode(p)||id==='painel';}
@@ -52,7 +52,6 @@ function aplicarPermissoesDaTela(tab){
   if(!cfg)return;
   const permitido=!!pode(cfg[0]);
   cfg[1].forEach(id=>{const form=document.getElementById(id);if(form&&form.closest('.card'))form.closest('.card').hidden=!permitido;});
-  if(tab==='reservas'&&!pode('guests.manage')){const form=document.getElementById('form-hospede');if(form&&form.closest('.card'))form.closest('.card').hidden=true;}
   if(tab==='servicos'&&!pode('requests.manage')){const form=document.getElementById('form-pedido');if(form&&form.closest('.card'))form.closest('.card').hidden=true;}
 }
 function toast(msg,type=''){const host=document.getElementById('toast-host');const el=document.createElement('div');el.className='toast '+(type||'');el.textContent=msg;host.appendChild(el);setTimeout(()=>el.remove(),3500);}
@@ -136,18 +135,35 @@ async function carregarBase(){
   popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
   popularSelect('p-quarto',state.quartos,null,x=>x.numero+' — '+x.tipo,x=>x.id);
   popularSelect('os-quarto',state.quartos,null,x=>x.numero+' — '+x.tipo,x=>x.id);
-  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);
+  popularSelect('r-hospede-id',state.hospedes,'Selecione um hóspede já cadastrado (opcional)',x=>x.nome,x=>x.id);
   popularSelect('p-hospede',state.hospedes,'Selecionar hóspede',x=>x.nome,x=>x.id);
   popularSelect('os-hospede',state.hospedes,'Sem hóspede específico',x=>x.nome,x=>x.id);
 }
-function preencherFaixas(){
-  const box=document.getElementById('container-faixas-reserva');box.innerHTML='';
-  state.faixas.forEach(f=>{
-    const div=document.createElement('div');div.className='field';
-    div.innerHTML='<label>'+escapar(f.nome)+' — +'+moeda(f.valor_adicional)+'/dia</label><input class="faixa-input" data-id="'+f.id+'" type="number" min="0" step="1" value="0">';
-    box.appendChild(div);
-  });
+function faixaDaIdade(idade){return state.faixas.find(f=>Number(idade)>=Number(f.idade_min)&&Number(idade)<=Number(f.idade_max))||null;}
+function atualizarFaixaPrincipal(){
+  const idade=document.getElementById('r-responsavel-idade')?.value,label=document.getElementById('r-responsavel-faixa');if(!label)return;
+  if(idade===''){label.textContent='Informe a idade para detectar a faixa.';return;}
+  const faixa=faixaDaIdade(Number(idade));label.textContent=faixa?'Faixa detectada: '+faixa.nome+' · adicional de '+moeda(faixa.valor_adicional)+'/diária':(state.faixas.length?'Nenhuma faixa configurada para essa idade.':'Cadastre as faixas etárias do hotel.');
 }
+function atualizarFaixaPessoa(idadeInput,resultado){
+  const idade=idadeInput.value===''?NaN:Number(idadeInput.value),faixa=Number.isInteger(idade)?faixaDaIdade(idade):null;
+  resultado.textContent=faixa?'Faixa: '+faixa.nome+' · '+moeda(faixa.valor_adicional)+'/diária':(Number.isInteger(idade)?'Faixa não configurada':'Informe a idade');
+}
+function preencherFaixas(){
+  atualizarFaixaPrincipal();
+  document.querySelectorAll('.person-entry').forEach(row=>{const idade=row.querySelector('[data-role="idade"]'),faixa=row.querySelector('[data-role="faixa"]');if(idade&&faixa)atualizarFaixaPessoa(idade,faixa);});
+}
+function adicionarPessoaReserva(dados={}){
+  const box=document.getElementById('container-pessoas-reserva');if(!box)return;
+  if(box.children.length>=19){toast('O limite é de 20 pessoas por reserva.','error');return;}
+  const row=document.createElement('div');row.className='person-entry';
+  const nomeField=document.createElement('div');nomeField.className='field person-name';const nomeLabel=document.createElement('label');nomeLabel.textContent='Nome da pessoa';const nome=document.createElement('input');nome.type='text';nome.maxLength=180;nome.required=true;nome.value=dados.nome||'';nome.dataset.role='nome';nomeField.append(nomeLabel,nome);
+  const idadeField=document.createElement('div');idadeField.className='field';const idadeLabel=document.createElement('label');idadeLabel.textContent='Idade';const idade=document.createElement('input');idade.type='number';idade.min='0';idade.max='120';idade.step='1';idade.required=true;idade.value=dados.idade??'';idade.dataset.role='idade';idadeField.append(idadeLabel,idade);
+  const faixa=document.createElement('div');faixa.className='small';faixa.dataset.role='faixa';atualizarFaixaPessoa(idade,faixa);idade.addEventListener('input',()=>atualizarFaixaPessoa(idade,faixa));
+  const remover=document.createElement('button');remover.type='button';remover.className='btn btn-danger remove-person';remover.textContent='Remover';remover.addEventListener('click',()=>row.remove());
+  row.append(nomeField,idadeField,faixa,remover);box.appendChild(row);
+}
+function limparPessoasExtras(){const box=document.getElementById('container-pessoas-reserva');if(box)box.innerHTML='';}
 async function carregarQuartos(){
   const podeVerHospedagens=pode('reservations.view');
   const [quartos,reservas]=await Promise.all([
@@ -208,14 +224,8 @@ document.getElementById('form-lote').addEventListener('submit',async e=>{e.preve
 
 async function carregarHospedes(){
   state.hospedes=await jsonFetch('/api/hospedes')||[];
-  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);popularSelect('p-hospede',state.hospedes,'Selecionar hóspede',x=>x.nome,x=>x.id);popularSelect('os-hospede',state.hospedes,'Sem hóspede específico',x=>x.nome,x=>x.id);
-  const tbody=document.getElementById('tabela-hospedes');tbody.innerHTML='';
-  state.hospedes.forEach(h=>{const tr=document.createElement('tr');tr.innerHTML='<td><strong>'+escapar(h.nome)+'</strong></td><td>'+escapar(h.documento||'-')+'</td><td>'+escapar(h.telefone||'-')+'</td><td>'+escapar(h.email||'-')+'</td><td><button class="btn btn-secondary" onclick="editarHospede('+h.id+')">Editar</button></td>';tbody.appendChild(tr);});
+  popularSelect('r-hospede-id',state.hospedes,'Selecione um hóspede já cadastrado (opcional)',x=>x.nome+(x.telefone?' · '+x.telefone:''),x=>x.id);popularSelect('p-hospede',state.hospedes,'Selecionar hóspede',x=>x.nome,x=>x.id);popularSelect('os-hospede',state.hospedes,'Sem hóspede específico',x=>x.nome,x=>x.id);
 }
-function limparHospedeForm(){document.getElementById('form-hospede').reset();document.getElementById('h-edit-id').value='';document.getElementById('h-cancel').classList.add('hidden');document.getElementById('h-submit').textContent='Salvar hóspede';document.getElementById('hospede-form-title').textContent='Novo hóspede';}
-function editarHospede(id){const h=state.hospedes.find(x=>x.id===id);if(!h)return;switchTab('reservas');document.getElementById('h-edit-id').value=id;document.getElementById('h-nome').value=h.nome;document.getElementById('h-doc').value=h.documento||'';document.getElementById('h-tel').value=h.telefone||'';document.getElementById('h-email').value=h.email||'';document.getElementById('h-obs').value=h.observacoes||'';document.getElementById('h-cancel').classList.remove('hidden');document.getElementById('h-submit').textContent='Salvar alterações';document.getElementById('hospede-form-title').textContent='Editar hóspede';}
-document.getElementById('form-hospede').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('h-edit-id').value;const body={nome:document.getElementById('h-nome').value,documento:document.getElementById('h-doc').value,telefone:document.getElementById('h-tel').value,email:document.getElementById('h-email').value,observacoes:document.getElementById('h-obs').value};try{await jsonFetch(id?'/api/hospedes/'+id:'/api/hospedes',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Hóspede atualizado.':'Hóspede cadastrado.','success');limparHospedeForm();carregarHospedes();}catch(e){toast(e.message,'error');}});
-document.getElementById('h-cancel').onclick=limparHospedeForm;
 
 async function carregarCategorias(){state.faixas=await jsonFetch('/api/faixas_etarias')||[];preencherFaixas();const tb=document.getElementById('tabela-categorias');tb.innerHTML='';state.faixas.forEach(f=>{const tr=document.createElement('tr');tr.innerHTML='<td>'+escapar(f.nome)+'</td><td>'+f.idade_min+' a '+f.idade_max+'</td><td>'+moeda(f.valor_adicional)+'</td><td><div class="row-actions"><button class="btn btn-secondary" onclick="editarCategoria('+f.id+')">Editar</button><button class="btn btn-danger" onclick="excluirCategoria('+f.id+')">Excluir</button></div></td>';tb.appendChild(tr);});}
 function limparCategoriaForm(){document.getElementById('form-cat').reset();document.getElementById('cat-edit-id').value='';document.getElementById('cat-adicional').value='0';document.getElementById('cat-cancel').classList.add('hidden');document.getElementById('cat-submit').textContent='Salvar faixa etária';document.getElementById('cat-form-title').textContent='Nova faixa etária';}
@@ -224,25 +234,54 @@ async function excluirCategoria(id){if(!confirm('Excluir esta faixa etária?'))r
 document.getElementById('form-cat').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('cat-edit-id').value;const body={nome:document.getElementById('cat-nome').value,idade_min:parseInt(document.getElementById('cat-min').value,10),idade_max:parseInt(document.getElementById('cat-max').value,10),valor_adicional:parseFloat(document.getElementById('cat-adicional').value)};try{await jsonFetch(id?'/api/faixas_etarias/'+id:'/api/faixas_etarias',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast(id?'Faixa etária atualizada.':'Faixa etária salva.','success');limparCategoriaForm();carregarCategorias();}catch(e){toast(e.message,'error');}});
 document.getElementById('cat-cancel').onclick=limparCategoriaForm;
 
+
 async function carregarReservas(){
-  const [rows,quartos,hospedes]=await Promise.all([jsonFetch('/api/reservas'),jsonFetch('/api/quartos'),jsonFetch('/api/hospedes')]);
-  const faixas=pode('categories.view')?await jsonFetch('/api/faixas_etarias'):[];
+  const [rows,quartos,hospedes,faixas]=await Promise.all([jsonFetch('/api/reservas'),jsonFetch('/api/quartos'),jsonFetch('/api/hospedes'),jsonFetch('/api/faixas_etarias')]);
   state.reservas=rows||[];state.quartos=quartos||[];state.hospedes=hospedes||[];state.faixas=faixas||[];
   popularSelect('r-quarto-num',state.quartos.filter(x=>x.status!=='MANUTENCAO'),null,x=>x.numero+' — '+x.tipo,x=>x.numero);
-  popularSelect('r-hospede-id',state.hospedes,null,x=>x.nome,x=>x.id);preencherFaixas();
+  popularSelect('r-hospede-id',state.hospedes,'Novo cadastro automático (opcional)',x=>x.nome+(x.telefone?' · '+x.telefone:''),x=>x.id);
+  preencherFaixas();
   const tb=document.getElementById('tabela-reservas');tb.innerHTML='';
-  if(!state.reservas.length){tb.innerHTML='<tr><td colspan="10" class="empty">Nenhuma reserva cadastrada.</td></tr>';return;}
-  state.reservas.forEach(r=>{const tr=document.createElement('tr');const pagado=String(r.status_pagamento).toUpperCase()==='PAGO';const cancelada=String(r.status).toUpperCase()==='CANCELADA';const mov=r.checkout_realizado_em?'Check-out realizado':r.checkin_realizado_em?'Check-in realizado':'Pendente';const botaoMov=!cancelada&&!r.checkin_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkin&quot;)">Check-in</button>':!cancelada&&!r.checkout_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkout&quot;)">Check-out</button>':'';tr.innerHTML='<td>'+r.id+'<br><span class="small">'+escapar(r.canal_origem||'Direto')+'</span></td><td>'+escapar(r.hospede_nome||'Não informado')+'</td><td><strong>'+escapar(r.quarto_numero)+'</strong></td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+r.diarias+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(r.status_pagamento)+'</td><td>'+escapar(r.observacoes||'-')+'</td><td>'+escapar(mov)+'<br>'+botaoMov+'</td><td><div class="row-actions">'+(!cancelada?'<button class="btn btn-secondary" onclick="editarReserva('+r.id+')">Editar</button>':'')+(!cancelada?'<button class="btn '+(pagado?'btn-warning':'btn-success')+'" onclick="alterarPagamentoReserva('+r.id+','+(pagado?'false':'true')+')">'+(pagado?'Não pago':'Pagou')+'</button>':'')+(!cancelada?'<button class="btn btn-danger" onclick="cancelarReserva('+r.id+')">Cancelar</button>':'')+'</div></td>';tb.appendChild(tr);});
+  if(!state.reservas.length)tb.innerHTML='<tr><td colspan="10" class="empty">Nenhuma reserva cadastrada.</td></tr>';
+  state.reservas.forEach(r=>{
+    const tr=document.createElement('tr'),pago=String(r.status_pagamento).toUpperCase()==='PAGO',cancelada=String(r.status).toUpperCase()==='CANCELADA';
+    const mov=r.checkout_realizado_em?'Check-out realizado':r.checkin_realizado_em?'Check-in realizado':'Pendente';
+    const botaoMov=!cancelada&&!r.checkin_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkin&quot;)">Check-in</button>':!cancelada&&!r.checkout_realizado_em?'<button class="btn btn-secondary" onclick="registrarMovimentacaoReserva('+r.id+',&quot;checkout&quot;)">Check-out</button>':'';
+    tr.innerHTML='<td>'+r.id+'<br><span class="small">'+escapar(r.canal_origem||'Direto')+'</span></td><td>'+escapar(r.hospede_nome||'Não informado')+'<br><span class="small">'+(r.pessoas||[]).length+' pessoa(s)</span></td><td><strong>'+escapar(r.quarto_numero)+'</strong></td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td><td>'+r.diarias+'</td><td>'+moeda(r.valor_total)+'</td><td>'+badgeStatus(r.status_pagamento)+'</td><td>'+escapar(r.observacoes||'-')+'</td><td>'+escapar(mov)+'<br>'+botaoMov+'</td><td><div class="row-actions">'+(!cancelada?'<button class="btn btn-secondary" onclick="editarReserva('+r.id+')">Editar</button>':'')+(!cancelada?'<button class="btn '+(pago?'btn-warning':'btn-success')+'" onclick="alterarPagamentoReserva('+r.id+','+(pago?'false':'true')+')">'+(pago?'Não pago':'Pagou')+'</button>':'')+(!cancelada?'<button class="btn btn-danger" onclick="cancelarReserva('+r.id+')">Cancelar</button>':'')+'</div></td>';
+    tb.appendChild(tr);
+  });
+  const pessoasBody=document.getElementById('tabela-pessoas-reservas');
+  if(pessoasBody){const linhas=[];state.reservas.forEach(r=>(r.pessoas||[]).forEach(p=>linhas.push('<tr><td>'+escapar(p.nome)+(Number(p.principal)?' <span class="badge badge-neutral">Responsável</span>':'')+'</td><td>'+(p.idade==null?'—':escapar(p.idade))+'</td><td>'+escapar(p.faixa_etaria||'Não informada')+'</td><td>#'+escapar(r.id)+'</td><td>'+escapar(r.quarto_numero)+'</td><td>'+escapar(r.check_in)+' até '+escapar(r.check_out)+'</td></tr>')));pessoasBody.innerHTML=linhas.join('')||'<tr><td colspan="6" class="empty">As pessoas cadastradas aparecerão aqui vinculadas às reservas e aos quartos.</td></tr>';}
 }
-function alternarNovoHospedeReserva(){const box=document.getElementById('r-novo-hospede'),select=document.getElementById('r-hospede-id'),show=box.classList.contains('hidden');box.classList.toggle('hidden',!show);select.required=!show;document.getElementById('r-novo-nome').required=show;if(show)select.value='';}
-function limparReservaForm(){document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();}
-function editarReserva(id){const r=state.reservas.find(x=>x.id===id);if(!r)return;switchTab('reservas');document.getElementById('r-novo-hospede').classList.add('hidden');document.getElementById('r-hospede-id').required=true;document.getElementById('r-novo-nome').required=false;document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id;document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;document.getElementById('r-canal').value=r.canal_origem||'Direto';document.getElementById('r-observacoes').value=r.observacoes||'';document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;}
+function limparReservaForm(){
+  document.getElementById('form-reserva').reset();document.getElementById('r-edit-id').value='';limparPessoasExtras();
+  document.getElementById('r-cancel').classList.add('hidden');document.getElementById('r-submit').textContent='Criar reserva';document.getElementById('reserva-form-title').textContent='Nova reserva';preencherFaixas();
+}
+function editarReserva(id){
+  const r=state.reservas.find(x=>Number(x.id)===Number(id));if(!r)return;switchTab('reservas');
+  document.getElementById('r-edit-id').value=id;document.getElementById('r-hospede-id').value=r.hospede_id||'';
+  document.getElementById('r-responsavel-nome').value=r.hospede_nome||'';
+  const principal=(r.pessoas||[]).find(x=>Number(x.principal))||(r.pessoas||[])[0];
+  document.getElementById('r-responsavel-idade').value=principal&&principal.idade!=null?principal.idade:'';
+  document.getElementById('r-responsavel-doc').value=r.hospede_documento||'';document.getElementById('r-responsavel-tel').value=r.hospede_telefone||'';document.getElementById('r-responsavel-email').value=r.hospede_email||'';
+  document.getElementById('r-quarto-num').value=r.quarto_numero;document.getElementById('r-checkin').value=r.check_in;document.getElementById('r-checkout').value=r.check_out;
+  document.getElementById('r-canal').value=r.canal_origem||'Direto';document.getElementById('r-observacoes').value=r.observacoes||'';
+  limparPessoasExtras();(r.pessoas||[]).filter(x=>!Number(x.principal)).forEach(p=>adicionarPessoaReserva(p));
+  preencherFaixas();document.getElementById('r-cancel').classList.remove('hidden');document.getElementById('r-submit').textContent='Salvar alterações';document.getElementById('reserva-form-title').textContent='Editar reserva #'+id;
+}
 async function registrarMovimentacaoReserva(id,acao){try{const d=await jsonFetch('/api/reservas/'+id+'/movimentacao',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao})});toast(d.mensagem,'success');await carregarReservas();}catch(e){toast(e.message,'error');}}
 async function alterarPagamentoReserva(id,pago){const forma=pago?(prompt('Forma de pagamento (PIX, cartão, dinheiro etc.):','PIX')||'Não informado'):'Não informado';if(pago&&!confirm('Confirmar que a reserva foi paga e lançar a entrada no caixa?'))return;if(!pago&&!confirm('Marcar a reserva como não paga e remover a entrada automática do caixa?'))return;try{await jsonFetch('/api/reservas/'+id+'/pagamento',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:pago?'PAGO':'PENDENTE',forma_pagamento:forma})});toast('Pagamento da reserva atualizado.','success');await carregarReservas();if(abaAtual==='quartos')renderHospedagensQuartos();if(abaAtual==='financeiro')await carregarFinanceiro();}catch(e){toast(e.message,'error');}}
 async function cancelarReserva(id){if(!confirm('Cancelar esta reserva? O pagamento automático, se houver, será retirado do caixa.'))return;try{await jsonFetch('/api/reservas/'+id+'/cancelar',{method:'PUT'});toast('Reserva cancelada.','success');carregarReservas();}catch(e){toast(e.message,'error');}}
-document.getElementById('form-reserva').addEventListener('submit',async e=>{e.preventDefault();const id=document.getElementById('r-edit-id').value,novo=document.getElementById('r-novo-hospede').classList.contains('hidden')?null:{nome:document.getElementById('r-novo-nome').value,documento:document.getElementById('r-novo-doc').value,telefone:document.getElementById('r-novo-tel').value,email:document.getElementById('r-novo-email').value};const comps=[...document.querySelectorAll('.faixa-input')].map(x=>({faixa_id:parseInt(x.dataset.id,10),quantidade:parseInt(x.value||'0',10)}));const body={hospede_id:novo?null:(parseInt(document.getElementById('r-hospede-id').value,10)||null),novo_hospede:novo,quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,canal_origem:document.getElementById('r-canal').value,observacoes:document.getElementById('r-observacoes').value,composicao:comps};try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();await Promise.all([carregarReservas(),carregarHospedes()]);}catch(e){toast(e.message,'error');}});
+document.getElementById('r-responsavel-idade').addEventListener('input',atualizarFaixaPrincipal);
+document.getElementById('r-adicionar-pessoa').addEventListener('click',()=>adicionarPessoaReserva());
+document.getElementById('r-hospede-id').addEventListener('change',()=>{const guest=state.hospedes.find(x=>String(x.id)===document.getElementById('r-hospede-id').value);if(!guest)return;document.getElementById('r-responsavel-nome').value=guest.nome||'';document.getElementById('r-responsavel-doc').value=guest.documento||'';document.getElementById('r-responsavel-tel').value=guest.telefone||'';document.getElementById('r-responsavel-email').value=guest.email||'';});
+document.getElementById('form-reserva').addEventListener('submit',async e=>{
+  e.preventDefault();const id=document.getElementById('r-edit-id').value;
+  const outras_pessoas=[...document.querySelectorAll('.person-entry')].map(row=>({nome:row.querySelector('[data-role="nome"]').value,idade:row.querySelector('[data-role="idade"]').value}));
+  const body={hospede_id:parseInt(document.getElementById('r-hospede-id').value,10)||null,hospede_nome:document.getElementById('r-responsavel-nome').value,hospede_idade:document.getElementById('r-responsavel-idade').value,hospede_documento:document.getElementById('r-responsavel-doc').value,hospede_telefone:document.getElementById('r-responsavel-tel').value,hospede_email:document.getElementById('r-responsavel-email').value,outras_pessoas,quarto_numero:document.getElementById('r-quarto-num').value,check_in:document.getElementById('r-checkin').value,check_out:document.getElementById('r-checkout').value,canal_origem:document.getElementById('r-canal').value,observacoes:document.getElementById('r-observacoes').value};
+  try{const d=await jsonFetch(id?'/api/reservas/'+id:'/api/reservas',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast((id?'Reserva atualizada. ':'Reserva criada. ')+moeda(d.valor_total),'success');limparReservaForm();await Promise.all([carregarReservas(),carregarHospedes()]);}catch(e){toast(e.message,'error');}
+});
 document.getElementById('r-cancel').onclick=limparReservaForm;
-
 async function carregarServicos(){
   state.servicos=await jsonFetch('/api/servicos')||[];
   const tb=document.getElementById('tabela-servicos');tb.innerHTML='';
@@ -492,8 +531,5 @@ async function loadTab(tab){
   else if(tab==='whatsapp'){preencherWhatsApp();}
 }
 
-const painelHospedes=document.getElementById('painel-hospedes-reserva');
-painelHospedes.classList.add('reserva-hospedes');
-document.getElementById('tab-reservas').appendChild(painelHospedes);
 renderNav();
 switchTab(primeiraAba,false);

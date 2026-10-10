@@ -1440,6 +1440,8 @@ def criar_faixa(current_user,role):
     if not nome or minimo<0 or maximo>120 or maximo<minimo or not math.isfinite(adicional) or adicional<0: return jsonify({'erro':'Informe nome, idades entre 0 e 120 e adicional não negativo.'}),400
     conn=get_db()
     try:
+        conflito=conn.execute('SELECT id FROM faixas_etarias WHERE hotel_id=? AND NOT (idade_max<? OR idade_min>?) LIMIT 1',(g.hotel_id,minimo,maximo)).fetchone()
+        if conflito: return jsonify({'erro':'Esta faixa etária se sobrepõe a outra faixa cadastrada.'}),400
         conn.execute('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',(nome,minimo,maximo,adicional,g.hotel_id)); conn.commit()
         return jsonify({'mensagem':'Faixa etária salva.'}),201
     finally: conn.close()

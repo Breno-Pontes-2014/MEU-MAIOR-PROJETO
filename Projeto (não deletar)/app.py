@@ -1441,7 +1441,7 @@ def criar_faixa(current_user,role):
     conn=get_db()
     try:
         conn.execute('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',(nome,minimo,maximo,adicional,g.hotel_id)); conn.commit()
-        return jsonify({'mensagem':'Categoria salva.'}),201
+        return jsonify({'mensagem':'Faixa etária salva.'}),201
     finally: conn.close()
 
 @app.route('/api/faixas_etarias/<int:fid>',methods=['PUT'])
@@ -1454,9 +1454,11 @@ def editar_faixa(current_user,role,fid):
         try: minimo=int(data.get('idade_min',f['idade_min'])); maximo=int(data.get('idade_max',f['idade_max'])); adicional=float(data.get('valor_adicional',f['valor_adicional']))
         except (TypeError,ValueError): return jsonify({'erro':'Valores inválidos.'}),400
         nome=str(data.get('nome',f['nome']) or '').strip()[:100]
-        if not nome or minimo<0 or maximo<minimo or adicional<0: return jsonify({'erro':'Revise os dados da categoria.'}),400
+        if not nome or minimo<0 or maximo>120 or maximo<minimo or not math.isfinite(adicional) or adicional<0: return jsonify({'erro':'Informe nome, idades entre 0 e 120 e adicional não negativo.'}),400
+        conflito=conn.execute('SELECT id FROM faixas_etarias WHERE hotel_id=? AND id<>? AND NOT (idade_max<? OR idade_min>?) LIMIT 1',(g.hotel_id,fid,minimo,maximo)).fetchone()
+        if conflito: return jsonify({'erro':'Esta faixa etária se sobrepõe a outra faixa cadastrada.'}),400
         conn.execute('UPDATE faixas_etarias SET nome=?,idade_min=?,idade_max=?,valor_adicional=? WHERE id=? AND hotel_id=?',(nome,minimo,maximo,adicional,fid,g.hotel_id)); conn.commit()
-        return jsonify({'mensagem':'Categoria atualizada.'}),200
+        return jsonify({'mensagem':'Faixa etária atualizada.'}),200
     finally: conn.close()
 
 @app.route('/api/faixas_etarias/<int:fid>',methods=['DELETE'])
@@ -1464,7 +1466,7 @@ def editar_faixa(current_user,role,fid):
 def deletar_faixa(current_user,role,fid):
     conn=get_db()
     try:
-        if not conn.execute('SELECT id FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone(): return jsonify({'erro':'Categoria não encontrada.'}),404
+        if not conn.execute('SELECT id FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone(): return jsonify({'erro':'Faixa etária não encontrada.'}),404
         conn.execute('DELETE FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Faixa etária removida.'}),200
     finally: conn.close()
 

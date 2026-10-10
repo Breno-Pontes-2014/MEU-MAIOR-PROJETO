@@ -1217,7 +1217,7 @@ def dashboard():
         menu_items=[
             {'id':'painel','icone':'PD','nome':'Painel','permissao':'reports.view'},
             {'id':'quartos','icone':'QT','nome':'Quartos','permissao':'rooms.view'},
-            {'id':'categorias','icone':'CP','nome':'Categorias de pessoas','permissao':'categories.view'},
+            {'id':'categorias','icone':'FE','nome':'Faixas etárias','permissao':'categories.view'},
             {'id':'reservas','icone':'RS','nome':'Reservas','permissao':'reservations.view'},
             {'id':'servicos','icone':'SV','nome':'Serviços e pedidos','permissao':'services.view'},
             {'id':'ordens','icone':'OS','nome':'Ordens de serviço','permissao':'orders.view'},
@@ -1437,7 +1437,7 @@ def criar_faixa(current_user,role):
     try: minimo=int(data.get('idade_min',0)); maximo=int(data.get('idade_max',120)); adicional=float(data.get('valor_adicional',0))
     except (TypeError,ValueError): return jsonify({'erro':'Valores da faixa inválidos.'}),400
     nome=str(data.get('nome') or '').strip()[:100]
-    if not nome or minimo<0 or maximo<minimo or adicional<0: return jsonify({'erro':'Revise os dados da categoria.'}),400
+    if not nome or minimo<0 or maximo>120 or maximo<minimo or not math.isfinite(adicional) or adicional<0: return jsonify({'erro':'Informe nome, idades entre 0 e 120 e adicional não negativo.'}),400
     conn=get_db()
     try:
         conn.execute('INSERT INTO faixas_etarias (nome,idade_min,idade_max,valor_adicional,hotel_id) VALUES (?,?,?,?,?)',(nome,minimo,maximo,adicional,g.hotel_id)); conn.commit()
@@ -1450,7 +1450,7 @@ def editar_faixa(current_user,role,fid):
     data=request.get_json(silent=True) or {}; conn=get_db()
     try:
         f=conn.execute('SELECT * FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone()
-        if not f: return jsonify({'erro':'Categoria não encontrada.'}),404
+        if not f: return jsonify({'erro':'Faixa etária não encontrada.'}),404
         try: minimo=int(data.get('idade_min',f['idade_min'])); maximo=int(data.get('idade_max',f['idade_max'])); adicional=float(data.get('valor_adicional',f['valor_adicional']))
         except (TypeError,ValueError): return jsonify({'erro':'Valores inválidos.'}),400
         nome=str(data.get('nome',f['nome']) or '').strip()[:100]
@@ -1465,7 +1465,7 @@ def deletar_faixa(current_user,role,fid):
     conn=get_db()
     try:
         if not conn.execute('SELECT id FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)).fetchone(): return jsonify({'erro':'Categoria não encontrada.'}),404
-        conn.execute('DELETE FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Categoria removida.'}),200
+        conn.execute('DELETE FROM faixas_etarias WHERE id=? AND hotel_id=?',(fid,g.hotel_id)); conn.commit(); return jsonify({'mensagem':'Faixa etária removida.'}),200
     finally: conn.close()
 
 @app.route('/api/reservas',methods=['GET'])

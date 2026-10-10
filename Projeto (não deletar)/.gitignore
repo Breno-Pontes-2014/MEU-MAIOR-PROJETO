@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+.flask_secret
+.jwt_secret
+__pycache__/
+*.py[cod]
+*.db
+*.db-shm
+*.db-wal

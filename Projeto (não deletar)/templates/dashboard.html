@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>Hotel Master | Gestão hoteleira</title>
+<style>
+:root{
+  --primary:#1f4f8f;--primary-dark:#173b6a;--bg:#f4f6f9;--surface:#fff;--text:#1f2937;
+  --muted:#6b7280;--border:#e5e7eb;--success:#157347;--warning:#9a6700;--danger:#b42318;
+  --sidebar:#172033;--sidebar-2:#202b40;--sidebar-text:#c7cfdb;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--text);background:var(--bg)}
+body{min-height:100vh}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+.app-shell{display:flex;min-height:100vh}
+.sidebar{width:258px;background:var(--sidebar);color:#fff;display:flex;flex-direction:column;min-height:100vh}
+.brand{padding:24px 20px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.brand-title{font-size:19px;font-weight:750;letter-spacing:.2px}
+.brand-subtitle{display:block;margin-top:3px;font-size:12px;color:#97a4b7}
+.user-panel{padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.08)}
+.user-name{font-size:14px;font-weight:650}
+.user-role{font-size:11px;color:#97a4b7;margin-top:4px}
+.hotel-name{font-size:12px;color:#c7cfdb;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-area{padding:14px 10px;overflow:auto;flex:1}
+.nav-group-title{font-size:10px;text-transform:uppercase;letter-spacing:1.1px;color:#8491a5;padding:0 9px 8px}
+.nav-btn{display:flex;align-items:center;width:100%;gap:10px;padding:10px 11px;margin-bottom:3px;background:transparent;border:1px solid transparent;border-radius:8px;color:var(--sidebar-text);text-align:left}
+.nav-btn:hover{background:var(--sidebar-2);color:#fff}
+.nav-btn.active{background:#284265;border-color:#365a88;color:#fff;font-weight:650}
+.nav-code{width:26px;height:26px;border-radius:6px;background:#263651;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:750}
+.nav-btn.active .nav-code{background:#3b6ba4}
+.sidebar-footer{padding:14px 12px;border-top:1px solid rgba(255,255,255,.08);display:grid;gap:8px}
+.btn-outline-light,.btn-logout{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #39455b;background:transparent;color:#d5dbe3}
+.btn-outline-light:hover{background:#263149}
+.btn-logout{color:#f5b4b0}
+.btn-logout:hover{background:rgba(180,35,24,.12)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--border);min-height:70px;display:flex;align-items:center;justify-content:space-between;padding:0 26px}
+.topbar-left{display:flex;align-items:center;gap:12px;min-width:0}
+.page-title{font-size:21px;font-weight:730;margin:0}
+.page-subtitle{font-size:12px;color:var(--muted);margin-top:3px}
+.topbar-actions{display:flex;align-items:center;gap:8px}
+.content{padding:24px;max-width:1600px;width:100%;margin:0 auto}
+.tab{display:none}.tab.active{display:block}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+.card-title{font-size:16px;font-weight:730;margin:0}
+.card-help{font-size:12px;color:var(--muted);margin:4px 0 0}
+.form-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+.field{grid-column:span 3;display:flex;flex-direction:column;gap:6px}
+.field.span-6{grid-column:span 6}.field.span-9{grid-column:span 9}.field.span-12{grid-column:span 12}
+.field label{font-size:12px;font-weight:650;color:#374151}
+.field input,.field select,.field textarea{width:100%;padding:10px 11px;border:1px solid #ccd3dd;border-radius:8px;background:#fff;color:#111827;outline:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#6091c8;box-shadow:0 0 0 3px rgba(31,79,143,.1)}
+.field textarea{min-height:88px;resize:vertical}
+.form-actions{grid-column:span 12;display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.btn{padding:9px 13px;border:1px solid transparent;border-radius:8px;font-size:12px;font-weight:650}
+.btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-dark)}
+.btn-secondary{background:#fff;color:#374151;border-color:#cbd5e1}.btn-secondary:hover{background:#f8fafc}
+.btn-success{background:#19724a;color:#fff}.btn-success:hover{background:#145a3b}
+.btn-danger{background:#b42318;color:#fff}.btn-danger:hover{background:#941f13}
+.btn-warning{background:#a05c00;color:#fff}.btn-warning:hover{background:#854d00}
+.btn-link{background:transparent;color:var(--primary);padding:6px 8px;border:0}
+.hidden{display:none!important}
+.notice{padding:11px 13px;border-radius:9px;margin-bottom:14px;font-size:12px}
+.notice.info{background:#edf4ff;color:#244e7c;border:1px solid #c9dcf5}
+.notice.success{background:#edf8f1;color:#155a3e;border:1px solid #c6e7d4}
+.notice.warning{background:#fff7e6;color:#7a5200;border:1px solid #f2d59b}
+.notice.danger{background:#fff0ee;color:#8f2016;border:1px solid #f1c0ba}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.metric{background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px}
+.metric-label{font-size:11px;color:var(--muted);font-weight:650;text-transform:uppercase;letter-spacing:.7px}
+.metric-value{font-size:24px;font-weight:760;margin-top:8px}
+.metric-note{font-size:11px;color:var(--muted);margin-top:4px}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}
+table{width:100%;border-collapse:collapse;background:#fff;min-width:780px}
+th,td{padding:11px 12px;border-bottom:1px solid #edf0f3;text-align:left;font-size:12px;vertical-align:middle}
+th{background:#f8fafc;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.35px;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.row-actions{display:flex;gap:5px;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.2px}
+.badge-ok{background:#e8f5ed;color:#16643f}.badge-pending{background:#fff7e2;color:#815800}.badge-danger{background:#fdecea;color:#9f2419}.badge-neutral{background:#eef2f6;color:#52606d}.badge-blue{background:#eaf2fc;color:#22528b}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.small{font-size:11px;color:var(--muted)}
+.empty{padding:30px;text-align:center;color:var(--muted);font-size:12px}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:8px;font-size:12px}
+.kv div:nth-child(odd){color:var(--muted)}
+.inline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.report-chart{min-height:230px;display:flex;align-items:center;justify-content:center;overflow:auto}.report-chart svg{width:100%;min-width:420px;height:auto}.origin-layout{display:flex;align-items:center;justify-content:center;gap:22px;flex-wrap:wrap}.donut{width:180px;height:180px;border-radius:50%;display:grid;place-items:center}.donut>div{width:105px;height:105px;background:#fff;border-radius:50%;display:grid;place-content:center;text-align:center;font-size:22px;font-weight:750}.donut small{font-size:10px;font-weight:500;color:var(--muted)}.legend{display:grid;gap:8px;font-size:12px}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px}.forecast-list{display:grid;gap:11px}.forecast-row{display:grid;grid-template-columns:76px 1fr 42px 88px;gap:9px;align-items:center;font-size:11px}.forecast-bar{height:9px;background:#edf1f5;border-radius:99px;overflow:hidden}.forecast-bar i{height:100%;display:block;background:var(--primary);border-radius:99px}.forecast-row small{color:var(--muted)}
+.platform-status{padding:4px 8px;border-radius:999px;font-size:10px;font-weight:700}
+.platform-open{background:#e8f5ed;color:#16643f}.platform-blocked{background:#fdecea;color:#9f2419}
+.toast-host{position:fixed;right:20px;bottom:20px;z-index:9999;display:grid;gap:8px;max-width:380px}
+.toast{background:#111827;color:#fff;padding:12px 14px;border-radius:9px;box-shadow:0 10px 30px rgba(0,0,0,.18);font-size:12px}
+.toast.success{background:#14532d}.toast.error{background:#991b1b}
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-backdrop.open{display:flex}
+.modal{width:min(760px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:14px;border:1px solid var(--border);box-shadow:0 30px 80px rgba(0,0,0,.25)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid var(--border)}
+.modal-body{padding:20px}
+.modal-footer{padding:16px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+@media(max-width:1100px){.sidebar{width:220px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.field{grid-column:span 6}}
+@media(max-width:760px){.app-shell{display:block}.sidebar{width:100%;min-height:auto}.nav-area{max-height:240px}.main{min-height:70vh}.topbar{padding:0 16px}.content{padding:14px}.field,.field.span-6,.field.span-9{grid-column:span 12}.metrics{grid-template-columns:1fr}.topbar-left{min-width:0}.page-title{font-size:17px}.topbar-actions .btn-secondary{display:none}}
+</style>
+<style>.person-entry{display:grid;grid-template-columns:minmax(160px,2fr) minmax(100px,1fr) minmax(150px,1.5fr) auto;gap:10px;align-items:end;padding:12px;border:1px solid #e5e7eb;border-radius:9px;background:#fafcff}.person-entry .field{grid-column:auto}.person-entry .remove-person{margin-bottom:1px}@media(max-width:760px){.person-entry{grid-template-columns:1fr 1fr}.person-entry .person-name{grid-column:span 2}}</style>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">Hotel Master</div>
+      <span class="brand-subtitle">Gestão hoteleira profissional</span>
+    </div>
+    <div class="user-panel">
+      <div class="user-name" id="user-name">{{ contexto_usuario.nome|e }}</div>
+      <div class="user-role" id="user-role">{{ contexto_usuario.role_label|e }}</div>
+      <div class="hotel-name" id="hotel-name">{{ contexto_usuario.hotel_nome|default('Administração SaaS', true)|e }}</div>
+    </div>
+    <div class="nav-area">
+      <div class="nav-group-title">Navegação</div>
+      <div id="nav">
+        {% for item in menu_inicial %}<button type="button" class="nav-btn{% if item.id == 'painel' or item.id == 'plataforma' %} active{% endif %}" data-tab="{{ item.id|e }}"><span class="nav-code">{{ item.icone|e }}</span><span>{{ item.nome|e }}</span></button>{% endfor %}
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button type="button" class="btn-outline-light" id="btn-back-side">Voltar</button>
+      <a href="/logout" class="btn-logout" style="display:block;text-align:center;text-decoration:none;padding:10px 12px;border-radius:8px;">Sair</a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <div>
+          <h1 class="page-title" id="page-title">Painel</h1>
+          <div class="page-subtitle" id="page-subtitle">Gestão operacional</div>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button type="button" class="btn btn-secondary" id="btn-back-top">Voltar</button>
+      </div>
+    </header>
+
+    <section class="content">
+      <div id="tab-painel" class="tab active"><div class="notice info">O painel está inicializando. Se esta mensagem permanecer, o navegador não carregou a versão atualizada do sistema.</div></div>
+
+      <div id="tab-quartos" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="quarto-form-title">Novo quarto</h2><p class="card-help">Cadastre, edite e controle a disponibilidade dos quartos.</p></div></div>
+          <form id="form-quarto" class="form-grid">
+            <input type="hidden" id="q-edit-id">
+            <div class="field"><label>Número</label><input id="q-numero" required maxlength="30"></div>
+            <div class="field"><label>Tipo</label><input id="q-tipo" required maxlength="80" placeholder="Standard, Luxo, Suíte"></div>
+            <div class="field"><label>Diária (R$)</label><input id="q-preco" type="number" min="0.01" step="0.01" required></div>
+            <div class="field"><label>Status</label><select id="q-status"><option value="DISPONIVEL">Disponível</option><option value="RESERVADO">Reservado</option><option value="OCUPADO">Ocupado</option><option value="MANUTENCAO">Manutenção</option></select></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="q-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="q-submit">Cadastrar quarto</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Geração em lote</h2><p class="card-help">Crie vários quartos mantendo a regra de numeração por andar já existente.</p></div></div>
+          <form id="form-lote" class="form-grid">
+            <div class="field"><label>Quantidade</label><input id="lote-qtd" type="number" min="1" max="500" value="10" required></div>
+            <div class="field"><label>Tipo padrão</label><input id="lote-tipo" value="Standard" maxlength="80" required></div>
+            <div class="field"><label>Diária base (R$)</label><input id="lote-preco" type="number" min="0.01" step="0.01" required></div>
+            <div class="field"><label>Primeiro número</label><input id="lote-inicial" type="number" min="1" value="101" required></div>
+            <div class="field"><label>Quartos por andar</label><input id="lote-por-andar" type="number" min="0" max="99" value="10"></div>
+            <div class="field span-6"><label>Prévia</label><div id="lote-previa" class="notice info" style="margin:0;">Informe os dados para visualizar a sequência.</div></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">Gerar quartos</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Quartos cadastrados <span class="small" id="contagem-quartos"></span></h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Número</th><th>Tipo</th><th>Diária</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-quartos"></tbody></table></div>
+        </div>
+<div class="card" id="quartos-estadias-card">
+          <div class="card-header"><div><h2 class="card-title">Hospedagens e pagamentos</h2><p class="card-help">Confira reservas vinculadas aos quartos, valores recebidos e valores pendentes.</p></div><div class="field"><label>Pagamento</label><select id="quartos-filtro-pagamento"><option value="TODOS">Todas</option><option value="PENDENTE">Pendentes</option><option value="PAGO">Pagas</option></select></div></div>
+          <div class="metrics" id="quartos-estadias-resumo"></div>
+          <div class="table-wrap"><table><thead><tr><th>Reserva</th><th>Hóspede</th><th>Quarto</th><th>Estadia</th><th>Total</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-hospedagens-quartos"></tbody></table></div>
+        </div>
+      </div>
+
+      <div id="tab-categorias" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="cat-form-title">Nova faixa etária</h2><p class="card-help">Defina os limites de idade e o adicional por diária para cada faixa.</p></div></div>
+          <form id="form-cat" class="form-grid">
+            <input type="hidden" id="cat-edit-id">
+            <div class="field span-6"><label>Nome da faixa etária</label><input id="cat-nome" required maxlength="100"></div>
+            <div class="field"><label>Idade mínima</label><input id="cat-min" type="number" min="0" required></div>
+            <div class="field"><label>Idade máxima</label><input id="cat-max" type="number" min="0" required></div>
+            <div class="field"><label>Adicional por diária (R$)</label><input id="cat-adicional" type="number" min="0" step="0.01" value="0"></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="cat-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="cat-submit">Salvar faixa etária</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Faixa etária</th><th>Idade</th><th>Adicional por diária</th><th>Ações</th></tr></thead><tbody id="tabela-categorias"></tbody></table></div></div>
+      </div>
+
+      <div id="tab-reservas" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="reserva-form-title">Nova reserva</h2><p class="card-help">O sistema impede conflito de datas e registra pagamento separadamente da receita.</p></div></div>
+          <form id="form-reserva" class="form-grid">
+            <input type="hidden" id="r-edit-id">
+            <div class="field span-6"><label>Vincular hóspede já cadastrado (opcional)</label><select id="r-hospede-id"></select></div>
+            <div class="field span-6"><label>Nome do responsável</label><input id="r-responsavel-nome" required maxlength="180"></div>
+            <div class="field"><label>Idade do responsável</label><input id="r-responsavel-idade" type="number" min="0" max="120" step="1" required><span id="r-responsavel-faixa" class="small">Informe a idade para detectar a faixa.</span></div>
+            <div class="field"><label>Documento</label><input id="r-responsavel-doc" maxlength="40"></div>
+            <div class="field"><label>Telefone</label><input id="r-responsavel-tel" maxlength="30"></div>
+            <div class="field"><label>E-mail</label><input id="r-responsavel-email" type="email" maxlength="160"></div>
+            <div class="field"><label>Quarto</label><select id="r-quarto-num" required></select></div>
+            <div class="field"><label>Check-in</label><input id="r-checkin" type="date" required></div>
+            <div class="field"><label>Check-out</label><input id="r-checkout" type="date" required></div>
+            <div class="field"><label>Origem da reserva</label><select id="r-canal"><option>Direto</option><option>WhatsApp</option><option>Balcão</option><option>Booking.com</option><option>Expedia</option><option>Airbnb</option><option>Outro</option></select></div>
+            <div class="field span-12"><label>Outras pessoas hospedadas</label><p class="card-help">Adicione somente quem vai ficar no quarto. A faixa etária e o adicional são identificados pelas regras do hotel.</p><div id="container-pessoas-reserva" class="inline-grid"></div><button class="btn btn-secondary" type="button" id="r-adicionar-pessoa">Adicionar pessoa</button></div>
+            <div class="field span-12"><label>Pedidos e anotações do hóspede</label><textarea id="r-observacoes" maxlength="2000" placeholder="Ex.: berço no quarto, chegada após as 22h, preferência por quarto silencioso"></textarea></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="r-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="r-submit">Criar reserva</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Reservas</h2><p class="card-help">Use "Pagou" somente quando a entrada tiver sido efetivamente recebida.</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>ID / origem</th><th>Hóspede</th><th>Quarto</th><th>Período</th><th>Diárias</th><th>Total</th><th>Pagamento</th><th>Pedidos/anotações</th><th>Movimentação</th><th>Ações</th></tr></thead><tbody id="tabela-reservas"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Hóspedes vinculados às reservas e quartos</h2><p class="card-help">Cada pessoa aparece associada à reserva, ao quarto e à faixa etária detectada.</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Hóspede</th><th>Idade</th><th>Faixa etária</th><th>Reserva</th><th>Quarto</th><th>Período</th></tr></thead><tbody id="tabela-pessoas-reservas"></tbody></table></div>
+        </div>
+      </div>
+
+      <div id="tab-servicos" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="servico-form-title">Novo serviço</h2><p class="card-help">A lista já começa com serviços essenciais e pode ser personalizada pelo hotel.</p></div></div>
+          <form id="form-servico" class="form-grid">
+            <input type="hidden" id="s-edit-id">
+            <div class="field span-6"><label>Serviço</label><input id="s-nome" required maxlength="120" placeholder="Ex.: Toalha extra"></div>
+            <div class="field"><label>Categoria</label><input id="s-categoria" maxlength="80" value="Diversos"></div>
+            <div class="field"><label>Unidade</label><input id="s-unidade" maxlength="30" value="unidade"></div>
+            <div class="field"><label>Preço (R$)</label><input id="s-preco" type="number" min="0" step="0.01" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="s-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="s-submit">Salvar serviço</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Lançar pedido ao hóspede</h2><p class="card-help">Exemplo: o cliente pediu uma toalha extra. O lançamento fica vinculado ao quarto, hóspede e, quando houver, à reserva.</p></div></div>
+          <form id="form-pedido" class="form-grid">
+            <div class="field span-6"><label>Quarto</label><select id="p-quarto" required></select></div>
+            <div class="field span-6"><label>Hóspede</label><select id="p-hospede"></select></div>
+            <div class="field span-6"><label>Serviço cadastrado</label><select id="p-servico"><option value="">Selecionar serviço</option></select></div>
+            <div class="field span-6"><label>Item personalizado</label><input id="p-item" maxlength="120" placeholder="Ex.: Adaptador de tomada"></div>
+            <div class="field"><label>Quantidade</label><input id="p-qtd" type="number" min="0.01" step="0.01" value="1"></div>
+            <div class="field"><label>Preço unitário (R$)</label><input id="p-preco" type="number" min="0" step="0.01" value="0"></div>
+            <div class="field span-9"><label>Observação</label><input id="p-desc" maxlength="500" placeholder="Detalhes do pedido"></div>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">Lançar pedido</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Serviços cadastrados</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Serviço</th><th>Categoria</th><th>Preço</th><th>Unidade</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-servicos"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Pedidos dos hóspedes</h2></div>
+          <div class="table-wrap"><table><thead><tr><th>Data</th><th>Quarto</th><th>Hóspede</th><th>Item</th><th>Qtd.</th><th>Total</th><th>Status</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="tabela-pedidos"></tbody></table></div>
+        </div>
+      </div>
+
+      <div id="tab-ordens" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="os-form-title">Nova ordem de serviço</h2><p class="card-help">Associe cada solicitação ao quarto e ao hóspede, e direcione para limpeza ou manutenção.</p></div></div>
+          <form id="form-os" class="form-grid">
+            <input type="hidden" id="os-edit-id">
+            <div class="field"><label>Quarto</label><select id="os-quarto" required></select></div>
+            <div class="field"><label>Hóspede</label><select id="os-hospede"></select></div>
+            <div class="field"><label>Tipo</label><select id="os-tipo"><option>Limpeza</option><option>Manutenção elétrica</option><option>Manutenção hidráulica</option><option>Governança</option><option>Outros</option></select></div>
+            <div class="field"><label>Prioridade</label><select id="os-prioridade"><option value="BAIXA">Baixa</option><option value="NORMAL" selected>Normal</option><option value="ALTA">Alta</option><option value="URGENTE">Urgente</option></select></div>
+            <div class="field span-6"><label>Responsável</label><select id="os-responsavel"><option value="">A definir</option></select></div>
+            <div class="field span-12"><label>Descrição</label><textarea id="os-desc" required maxlength="1000" placeholder="Descreva o que deve ser feito."></textarea></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="os-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="os-submit">Criar OS</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>OS</th><th>Quarto / andar</th><th>Hóspede</th><th>Serviço e descrição</th><th>Prioridade</th><th>Responsável</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-os"></tbody></table></div></div>
+      </div>
+
+      <div id="tab-equipe" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="user-form-title">Novo acesso</h2><p class="card-help">Crie perfis separados para recepção, gerente, limpeza, manutenção e financeiro.</p></div></div>
+          <form id="form-user" class="form-grid">
+            <input type="hidden" id="u-edit-id">
+            <div class="field"><label>Nome</label><input id="u-nome" required maxlength="160"></div>
+            <div class="field"><label>Usuário</label><input id="u-username" required maxlength="80"></div>
+            <div class="field"><label>Perfil</label><select id="u-role"><option value="recepcao">Recepção</option><option value="gerente">Gerente</option><option value="limpeza">Limpeza</option><option value="manutencao">Manutenção</option><option value="financeiro">Financeiro</option></select></div>
+            <div class="field"><label>E-mail</label><input id="u-email" type="email" maxlength="160"></div>
+            <div class="field"><label>WhatsApp do funcionário</label><input id="u-telefone" type="tel" maxlength="40" placeholder="55 + DDD + número"></div>
+            <div class="field span-6"><label><input id="u-whatsapp-optin" type="checkbox"> Autoriza receber novas ordens por WhatsApp</label></div>
+            <div class="field span-6"><label>Senha <span class="small">mínimo de 10 caracteres, maiúscula, minúscula e número</span></label><input id="u-password" type="password" maxlength="160"></div>
+            <div class="field"><label>Status</label><select id="u-ativo"><option value="1">Ativo</option><option value="0">Bloqueado</option></select></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="u-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="u-submit">Criar acesso</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>WhatsApp</th><th>Último login</th><th>Status</th><th>Ações</th></tr></thead><tbody id="tabela-equipe"></tbody></table></div></div>
+      </div>
+
+      <div id="tab-estoque" class="tab">
+        <div class="card">
+          <div class="card-header"><h2 class="card-title" id="estoque-form-title">Novo item de estoque</h2></div>
+          <form id="form-estoque" class="form-grid">
+            <input type="hidden" id="e-edit-id">
+            <div class="field span-6"><label>Item</label><input id="e-item" required maxlength="120"></div>
+            <div class="field"><label>Categoria</label><input id="e-cat" required maxlength="80"></div>
+            <div class="field"><label>Quantidade</label><input id="e-qtd" type="number" min="0" step="1" required></div>
+            <div class="field"><label>Preço unitário</label><input id="e-preco" type="number" min="0" step="0.01" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="e-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="e-submit">Adicionar item</button></div>
+          </form>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Item</th><th>Categoria</th><th>Quantidade</th><th>Preço</th><th>Ações</th></tr></thead><tbody id="tabela-estoque"></tbody></table></div></div>
+      </div>
+
+      <div id="tab-financeiro" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title" id="fin-form-title">Novo lançamento</h2><p class="card-help">Entradas de reservas e pedidos pagos aparecem automaticamente no caixa e não devem ser duplicadas.</p></div></div>
+          <form id="form-fin" class="form-grid">
+            <input type="hidden" id="f-edit-id">
+            <div class="field"><label>Tipo</label><select id="f-tipo"><option value="ENTRADA">Entrada</option><option value="SAIDA">Saída</option></select></div>
+            <div class="field span-6"><label>Descrição</label><input id="f-desc" required maxlength="200"></div>
+            <div class="field"><label>Valor</label><input id="f-valor" type="number" min="0" step="0.01" required></div>
+            <div class="field"><label>Data do lançamento</label><input id="f-data" type="date" required></div>
+            <div class="field"><label>Categoria</label><input id="f-cat" value="Geral" maxlength="80" required></div>
+            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="f-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="f-submit">Lançar</button></div>
+          </form>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Resumo do período</h2><p class="card-help">Caixa mostra pagamentos efetivos; hospedagem gerada e a receber consideram as noites reservadas.</p></div></div>
+          <div class="toolbar"><div class="field"><label>Período</label><select id="fin-periodo"><option value="mes">Mês atual</option><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="personalizado">Personalizado</option></select></div><div id="fin-datas-personalizadas" class="inline-grid hidden"><div class="field"><label>De</label><input id="fin-inicio" type="date"></div><div class="field"><label>Até</label><input id="fin-fim" type="date"></div></div><button class="btn btn-primary" type="button" id="fin-aplicar-periodo">Aplicar período</button></div>
+          <div class="metrics" id="financeiro-resumo"></div>
+          <p class="card-help" id="fin-comparacao"></p>
+        </div>
+        <div class="card"><div class="table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th>Origem</th><th>Ações</th></tr></thead><tbody id="tabela-financeiro"></tbody></table></div></div>
+      </div>
+
+      <div id="tab-relatorios" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Relatórios gerenciais</h2><p class="card-help">A ocupação e as receitas geradas consideram as datas de hospedagem; caixa considera os valores recebidos no período.</p></div></div>
+          <div class="toolbar"><div class="field"><label>Período</label><select id="rel-periodo"><option value="hoje">Hoje</option><option value="ontem">Ontem</option><option value="7dias">Últimos 7 dias</option><option value="mes">Mês atual</option><option value="personalizado">Personalizado</option></select></div><div id="rel-datas-personalizadas" class="inline-grid hidden"><div class="field"><label>De</label><input id="rel-inicio" type="date"></div><div class="field"><label>Até</label><input id="rel-fim" type="date"></div></div><button class="btn btn-primary" type="button" onclick="carregarRelatorios()">Aplicar período</button><button class="btn btn-secondary" type="button" onclick="carregarRelatorios()">Atualizar</button></div>
+          <div class="metric-note" id="rel-comparacao"></div>
+          <div class="metrics" id="relatorio-metricas"></div>
+        </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Movimentação de hoje</h2><p class="card-help">Entradas e saídas previstas e realizadas, além dos hóspedes que já fizeram check-in.</p></div></div><div class="metrics" id="relatorio-operacao"></div></div>
+        <div class="inline-grid span-12">
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Ocupação no período</h2><p class="card-help">Percentual de quartos reservados por noite.</p></div></div><div id="grafico-ocupacao" class="report-chart"></div></div>
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Origem das reservas</h2><p class="card-help">Canal informado no cadastro da reserva.</p></div></div><div id="grafico-origem" class="report-chart"></div></div>
+        </div>
+        <div class="inline-grid span-12">
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">Previsão de ocupação</h2><p class="card-help">Próximos sete dias com base nas reservas ativas.</p></div></div><div id="tabela-previsao" class="forecast-list"></div></div>
+          <div class="card span-6"><div class="card-header"><div><h2 class="card-title">ADR por categoria de quarto</h2><p class="card-help">Receita gerada dividida pelas diárias reservadas no período.</p></div></div><div class="table-wrap"><table><thead><tr><th>Categoria</th><th>Diárias</th><th>Receita gerada</th><th>ADR</th></tr></thead><tbody id="tabela-adr-categoria"></tbody></table></div></div>
+        </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Ações rápidas</h2><p class="card-help">Atalhos preservam as telas atuais de reservas, quartos e integrações.</p></div></div><div class="toolbar"><button class="btn btn-primary" type="button" onclick="switchTab('reservas')">Criar nova reserva</button><button class="btn btn-secondary" type="button" onclick="switchTab('quartos')">Ajustar tarifas dos quartos</button><a class="btn btn-secondary" href="https://admin.booking.com/" target="_blank" rel="noopener noreferrer">Abrir extranet Booking.com</a><a class="btn btn-secondary" href="https://www.airbnb.com/hosting/listings" target="_blank" rel="noopener noreferrer">Abrir gestão Airbnb</a></div><p class="card-help">Na extranet do Booking.com ou Airbnb, o proprietário pode alterar anúncios, fotos, tarifas, promoções e condições. A alteração direta pelo Hotel Master exige acesso às APIs de parceiros de cada plataforma, que não é habilitado por links públicos.</p></div>
+      </div>
+
+      <div id="tab-integracoes" class="tab">
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Canais e localização</h2><p class="card-help">Links públicos do hotel, Geoapify e localização.</p></div></div>
+          <form id="form-integracoes" class="form-grid">
+            <div class="field span-6"><label>Booking.com</label><input id="int-booking" type="url" placeholder="https://www.booking.com/..."></div>
+            <div class="field span-6"><label>Airbnb</label><input id="int-airbnb" type="url" placeholder="https://www.airbnb.com/rooms/..."></div>
+            <div class="field span-6"><label>Expedia</label><input id="int-expedia" type="url"></div>
+            <div class="field span-6"><label>Hoteis.com</label><input id="int-hoteis" type="url"></div>
+            <div class="field span-6"><label>Site próprio</label><input id="int-site" type="url"></div>
+            <div class="field span-6"><label>WhatsApp do hotel (opcional)</label><input id="int-whatsapp" type="tel" maxlength="40" placeholder="55 + DDD + número"></div>
+            <div class="field span-12"><p class="card-help">Avisos automáticos de ordens exigem telefone e autorização do funcionário e credenciais WhatsApp Cloud API no servidor. A Meta pode exigir um modelo aprovado para mensagens iniciadas pelo hotel.</p></div>
+            <div class="field span-12"><p class="card-help" id="int-whatsapp-status">Presença das credenciais da WhatsApp Cloud API será mostrada ao abrir esta aba.</p></div>
+            <div class="field span-12"><p class="card-help" id="int-api-status">Status das APIs será carregado nesta tela.</p></div>
+            <div class="field span-6"><label>Link do mapa</label><input id="int-maps-url" type="url"></div>
+            <div class="field span-6"><label>Nome do local</label><input id="int-maps-nome" maxlength="200"></div>
+            <div class="field span-6"><label>ID do local (Geoapify)</label><input id="int-place-id" maxlength="300"></div>
+            <div class="field span-12"><label>Endereço</label><input id="int-endereco" maxlength="500"></div>
+            <div class="field"><label>Latitude</label><input id="int-lat" type="number" step="any"></div>
+            <div class="field"><label>Longitude</label><input id="int-lng" type="number" step="any"></div>
+            <div class="form-actions"><button class="btn btn-secondary" type="button" onclick="pesquisarGeoapify()">Pesquisar endereço (Geoapify)</button><button class="btn btn-primary" type="submit">Salvar integrações</button></div>
+          </form>
+          <div id="resultado-maps" style="margin-top:14px;"></div>
+          <div id="mapa-hotel" style="margin-top:14px;"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Assinatura do hotel</h2><p class="card-help">Acesso é liberado pelo webhook do gateway, não pelo retorno do checkout.</p></div></div>
+          <div class="form-grid">
+            <div class="field span-6"><label>Plano</label><select id="saas-plano"></select></div>
+            <div class="field"><label>Status</label><input id="saas-status" readonly></div>
+            <div class="field"><label>Período final</label><input id="saas-fim" readonly></div>
+            <div class="form-actions"><button class="btn btn-primary" type="button" onclick="contratarPlano()">Abrir checkout recorrente</button></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Webhook de cobrança</h2><p class="card-help">Configure no Asaas a URL abaixo e o token de autenticação definido no servidor.</p></div></div>
+          <div class="field span-12"><label>URL do webhook</label><input id="int-webhook-url" readonly></div>
+        </div>
+      </div>
+
+      <div id="tab-whatsapp" class="tab">
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Mensagens WhatsApp</h2><p class="card-help">Abre a conversa no WhatsApp com a mensagem preparada.</p></div></div>
+          <div class="form-grid">
+            <div class="field"><label>Telefone</label><input id="wa-tel" placeholder="5561999999999"></div>
+            <div class="field span-6"><label>Modelo</label><select id="wa-template"><option value="Olá! Sua reserva está confirmada.">Confirmação de reserva</option><option value="Olá! Seu check-out está previsto para amanhã.">Lembrete de check-out</option><option value="Olá! Agradecemos pela estadia.">Pós-estadia</option></select></div>
+            <div class="field span-12"><label>Mensagem</label><textarea id="wa-msg"></textarea></div>
+            <div class="form-actions"><button class="btn btn-success" type="button" onclick="enviarWhatsApp()">Abrir WhatsApp</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-plataforma" class="tab">
+        <div class="metrics" id="plataforma-metricas"><div class="metric"><div class="metric-label">Visão SaaS</div><div class="metric-value">Carregando…</div></div></div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Infraestrutura, pagamentos e integrações</h2><p class="card-help">Status real de configuração e resposta do banco. APIs de canais dependem de acesso de parceiro.</p></div></div><div id="plataforma-saude" class="notice info">Verificando serviços…</div><h3>Uso de módulos (30 dias)</h3><div id="plataforma-modulos" class="notice info">Aguardando dados de uso.</div></div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Administração do SaaS</h2><p class="card-help">Visão central dos hotéis, administradores, assinaturas e bloqueios.</p></div><button class="btn btn-secondary" type="button" onclick="carregarPlataforma()">Atualizar</button></div>
+          <div id="plataforma-aviso" class="notice info">Carregando clientes.</div>
+          <div class="table-wrap"><table><thead><tr><th>Hotel</th><th>Administrador(es)</th><th>Plano</th><th>Validade</th><th>Status</th><th>Controle</th></tr></thead><tbody id="tabela-plataforma"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Usuários dos hotéis</h2><p class="card-help">Consulte contas e suspenda ou reative o acesso individual.</p></div></div>
+          <div id="plataforma-usuarios-aviso" class="notice info">Carregando usuários.</div>
+          <div class="table-wrap"><table><thead><tr><th>Usuário</th><th>E-mail</th><th>Hotel</th><th>Perfil</th><th>Último login</th><th>Status</th><th>Ação</th></tr></thead><tbody id="tabela-plataforma-usuarios"></tbody></table></div>
+        </div>
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Suporte e SLA</h2><p class="card-help">Chamados por hotel, tempo até a primeira resposta e acompanhamento.</p></div><button class="btn btn-secondary" type="button" onclick="carregarTicketsPlataforma()">Atualizar chamados</button></div><div id="tickets-plataforma-aviso" class="notice info">Carregando chamados.</div><div class="table-wrap"><table><thead><tr><th>Hotel / assunto</th><th>Prioridade</th><th>Status</th><th>Aberto em</th><th>1ª resposta</th><th>Ação</th></tr></thead><tbody id="tabela-tickets-plataforma"></tbody></table></div></div>
+      </div>
+      <div id="tab-suporte" class="tab">
+        <div class="card"><div class="card-header"><div><h2 class="card-title">Suporte</h2><p class="card-help">Abra um chamado e acompanhe as respostas da equipe.</p></div></div><div class="form-grid"><div class="field span-6"><label>Assunto</label><input id="suporte-assunto" maxlength="160"></div><div class="field span-6"><label>Prioridade</label><select id="suporte-prioridade"><option>NORMAL</option><option>BAIXA</option><option>ALTA</option></select></div><div class="field span-12"><label>Detalhes</label><textarea id="suporte-mensagem" maxlength="5000"></textarea></div><div class="form-actions"><button class="btn btn-primary" type="button" onclick="abrirChamado()">Abrir chamado</button></div></div></div>
+        <div class="card"><div class="card-header"><h2 class="card-title">Meus chamados</h2><button class="btn btn-secondary" type="button" onclick="carregarChamados()">Atualizar</button></div><div id="suporte-lista" class="notice info">Carregando chamados.</div></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast-host" id="toast-host"></div>
+<script>window.HOTEL_MASTER_CONTEXT = JSON.parse({{ contexto_usuario|tojson|tojson }});</script>
+<script src="{{ url_for('static', filename='dashboard.js', v='20261010.2') }}" defer></script>
+</body>
+</html>

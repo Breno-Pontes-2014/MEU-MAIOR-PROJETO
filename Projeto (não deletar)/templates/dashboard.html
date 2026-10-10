@@ -45,7 +45,6 @@ button{cursor:pointer}
 .topbar-actions{display:flex;align-items:center;gap:8px}
 .content{padding:24px;max-width:1600px;width:100%;margin:0 auto}
 .tab{display:none}.tab.active{display:block}
-#painel-hospedes-reserva{display:none}#tab-reservas #painel-hospedes-reserva{display:block}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
 .card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
 .card-title{font-size:16px;font-weight:730;margin:0}
@@ -105,6 +104,7 @@ tr:last-child td{border-bottom:0}
 @media(max-width:1100px){.sidebar{width:220px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.field{grid-column:span 6}}
 @media(max-width:760px){.app-shell{display:block}.sidebar{width:100%;min-height:auto}.nav-area{max-height:240px}.main{min-height:70vh}.topbar{padding:0 16px}.content{padding:14px}.field,.field.span-6,.field.span-9{grid-column:span 12}.metrics{grid-template-columns:1fr}.topbar-left{min-width:0}.page-title{font-size:17px}.topbar-actions .btn-secondary{display:none}}
 </style>
+<style>.person-entry{display:grid;grid-template-columns:minmax(160px,2fr) minmax(100px,1fr) minmax(150px,1.5fr) auto;gap:10px;align-items:end;padding:12px;border:1px solid #e5e7eb;border-radius:9px;background:#fafcff}.person-entry .field{grid-column:auto}.person-entry .remove-person{margin-bottom:1px}@media(max-width:760px){.person-entry{grid-template-columns:1fr 1fr}.person-entry .person-name{grid-column:span 2}}</style>
 </head>
 <body>
 <div class="app-shell">
@@ -181,25 +181,6 @@ tr:last-child td{border-bottom:0}
         </div>
       </div>
 
-      <div id="painel-hospedes-reserva">
-        <div class="card">
-          <div class="card-header"><div><h2 class="card-title" id="hospede-form-title">Novo hóspede</h2><p class="card-help">Mantenha os dados do cliente atualizados para reservas e pedidos.</p></div></div>
-          <form id="form-hospede" class="form-grid">
-            <input type="hidden" id="h-edit-id">
-            <div class="field span-6"><label>Nome completo</label><input id="h-nome" required maxlength="180"></div>
-            <div class="field"><label>Documento</label><input id="h-doc" maxlength="40"></div>
-            <div class="field"><label>Telefone</label><input id="h-tel" maxlength="30"></div>
-            <div class="field"><label>E-mail</label><input id="h-email" type="email" maxlength="160"></div>
-            <div class="field span-9"><label>Observações</label><textarea id="h-obs" maxlength="1000"></textarea></div>
-            <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="h-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="h-submit">Salvar hóspede</button></div>
-          </form>
-        </div>
-        <div class="card">
-          <div class="card-header"><h2 class="card-title">Hóspedes</h2></div>
-          <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Documento</th><th>Telefone</th><th>E-mail</th><th>Ações</th></tr></thead><tbody id="tabela-hospedes"></tbody></table></div>
-        </div>
-      </div>
-
       <div id="tab-categorias" class="tab">
         <div class="card">
           <div class="card-header"><div><h2 class="card-title" id="cat-form-title">Nova faixa etária</h2><p class="card-help">Defina os limites de idade e o adicional por diária para cada faixa.</p></div></div>
@@ -220,18 +201,17 @@ tr:last-child td{border-bottom:0}
           <div class="card-header"><div><h2 class="card-title" id="reserva-form-title">Nova reserva</h2><p class="card-help">O sistema impede conflito de datas e registra pagamento separadamente da receita.</p></div></div>
           <form id="form-reserva" class="form-grid">
             <input type="hidden" id="r-edit-id">
-            <div class="field span-6"><label>Hóspede existente</label><select id="r-hospede-id" required></select><button class="btn btn-secondary" type="button" style="margin-top:8px" onclick="alternarNovoHospedeReserva()">+ Cadastrar hóspede nesta reserva</button></div>
-            <div id="r-novo-hospede" class="inline-grid hidden span-12">
-              <div class="field span-6"><label>Nome completo</label><input id="r-novo-nome" maxlength="180"></div>
-              <div class="field"><label>Documento</label><input id="r-novo-doc" maxlength="40"></div>
-              <div class="field"><label>Telefone</label><input id="r-novo-tel" maxlength="30"></div>
-              <div class="field"><label>E-mail</label><input id="r-novo-email" type="email" maxlength="160"></div>
-            </div>
+            <div class="field span-6"><label>Vincular hóspede já cadastrado (opcional)</label><select id="r-hospede-id"></select></div>
+            <div class="field span-6"><label>Nome do responsável</label><input id="r-responsavel-nome" required maxlength="180"></div>
+            <div class="field"><label>Idade do responsável</label><input id="r-responsavel-idade" type="number" min="0" max="120" step="1" required><span id="r-responsavel-faixa" class="small">Informe a idade para detectar a faixa.</span></div>
+            <div class="field"><label>Documento</label><input id="r-responsavel-doc" maxlength="40"></div>
+            <div class="field"><label>Telefone</label><input id="r-responsavel-tel" maxlength="30"></div>
+            <div class="field"><label>E-mail</label><input id="r-responsavel-email" type="email" maxlength="160"></div>
             <div class="field"><label>Quarto</label><select id="r-quarto-num" required></select></div>
             <div class="field"><label>Check-in</label><input id="r-checkin" type="date" required></div>
             <div class="field"><label>Check-out</label><input id="r-checkout" type="date" required></div>
             <div class="field"><label>Origem da reserva</label><select id="r-canal"><option>Direto</option><option>WhatsApp</option><option>Balcão</option><option>Booking.com</option><option>Expedia</option><option>Airbnb</option><option>Outro</option></select></div>
-            <div class="field span-12"><label>Composição de pessoas</label><div id="container-faixas-reserva" class="inline-grid"></div></div>
+            <div class="field span-12"><label>Outras pessoas hospedadas</label><p class="card-help">Adicione somente quem vai ficar no quarto. A faixa etária e o adicional são identificados pelas regras do hotel.</p><div id="container-pessoas-reserva" class="inline-grid"></div><button class="btn btn-secondary" type="button" id="r-adicionar-pessoa">Adicionar pessoa</button></div>
             <div class="field span-12"><label>Pedidos e anotações do hóspede</label><textarea id="r-observacoes" maxlength="2000" placeholder="Ex.: berço no quarto, chegada após as 22h, preferência por quarto silencioso"></textarea></div>
             <div class="form-actions"><button class="btn btn-secondary hidden" type="button" id="r-cancel">Cancelar edição</button><button class="btn btn-primary" type="submit" id="r-submit">Criar reserva</button></div>
           </form>
@@ -239,6 +219,10 @@ tr:last-child td{border-bottom:0}
         <div class="card">
           <div class="card-header"><div><h2 class="card-title">Reservas</h2><p class="card-help">Use "Pagou" somente quando a entrada tiver sido efetivamente recebida.</p></div></div>
           <div class="table-wrap"><table><thead><tr><th>ID / origem</th><th>Hóspede</th><th>Quarto</th><th>Período</th><th>Diárias</th><th>Total</th><th>Pagamento</th><th>Pedidos/anotações</th><th>Movimentação</th><th>Ações</th></tr></thead><tbody id="tabela-reservas"></tbody></table></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><h2 class="card-title">Hóspedes vinculados às reservas e quartos</h2><p class="card-help">Cada pessoa aparece associada à reserva, ao quarto e à faixa etária detectada.</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>Hóspede</th><th>Idade</th><th>Faixa etária</th><th>Reserva</th><th>Quarto</th><th>Período</th></tr></thead><tbody id="tabela-pessoas-reservas"></tbody></table></div>
         </div>
       </div>
 
